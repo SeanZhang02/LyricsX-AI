@@ -17,6 +17,9 @@ class KaraokeLyricsView: NSView {
     @objc dynamic var drawRomajin = false
 
     @objc dynamic var font = NSFont.labelFont(ofSize: 24) { didSet { updateFontSize() } }
+
+    /// 用户配置的字号 (font 可能被自动缩小以完整显示超长行)
+    var baseFont = NSFont.labelFont(ofSize: 24) { didSet { font = baseFont } }
     @objc dynamic var textColor = #colorLiteral(red: 1, green: 1, blue: 1, alpha: 1)
     @objc dynamic var shadowColor = #colorLiteral(red: 0, green: 1, blue: 0.8333333333, alpha: 1)
     @objc dynamic var progressColor = #colorLiteral(red: 0, green: 1, blue: 0.8333333333, alpha: 1)
@@ -87,7 +90,27 @@ class KaraokeLyricsView: NSView {
         }
     }
 
+    /// 超长歌词行自动缩小字号, 避免被屏幕边界压缩后文字画不全
+    private func fitFont(for lines: [String]) -> NSFont {
+        guard let available = superview.map({
+            (isVertical ? $0.bounds.height : $0.bounds.width) - baseFont.pointSize * 2
+        }), available > 50 else {
+            return baseFont
+        }
+        var maxWidth: CGFloat = 0
+        for text in lines where !text.trimmingCharacters(in: .whitespaces).isEmpty {
+            maxWidth = max(maxWidth, (text as NSString).size(withAttributes: [.font: baseFont]).width)
+        }
+        guard maxWidth > available else { return baseFont }
+        let scaled = max(baseFont.pointSize * available / maxWidth * 0.98, 10)
+        return NSFont(descriptor: baseFont.fontDescriptor, size: scaled) ?? baseFont
+    }
+
     func displayLrc(_ firstLine: String, secondLine: String = "") {
+        let fitted = fitFont(for: [firstLine, secondLine])
+        if abs(fitted.pointSize - font.pointSize) > 0.5 {
+            font = fitted
+        }
         var toBeHide = stackView.arrangedSubviews.compactMap { $0 as? KaraokeLabel }
         var toBeShow: [NSTextField] = []
         var shouldHideAll = false

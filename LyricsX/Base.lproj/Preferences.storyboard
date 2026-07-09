@@ -315,6 +315,11 @@
                                     <gridRow yPlacement="center" height="20" id="b3M-VO-u37"/>
                                     <gridRow yPlacement="top" height="20" id="ubP-tx-cL1"/>
                                     <gridRow yPlacement="center" height="30" id="7Wx-n7-f04"/>
+                                    <gridRow yPlacement="center" height="30" id="aiT-gr-row"/>
+                                    <gridRow yPlacement="center" height="30" id="aiT-gr-url"/>
+                                    <gridRow yPlacement="center" height="30" id="aiT-gr-key"/>
+                                    <gridRow yPlacement="center" height="30" id="aiT-gr-mod"/>
+                                    <gridRow yPlacement="center" height="30" id="aiT-gr-lng"/>
                                     <gridRow yPlacement="center" height="30" id="8If-Ei-6qA"/>
                                     <gridRow yPlacement="center" height="20" id="6xB-DX-5FD"/>
                                     <gridRow yPlacement="center" height="30" id="JRU-jX-DWY"/>
@@ -543,6 +548,131 @@
                                                 <binding destination="968-l4-9l5" name="value" keyPath="values.PreferBilingualLyrics" id="1FJ-eD-2O9"/>
                                             </connections>
                                         </button>
+                                    </gridCell>
+                                    <gridCell row="aiT-gr-row" column="3Hg-Ka-QrM" id="aiT-gc-lbl"/>
+                                    <gridCell row="aiT-gr-row" column="IfN-lq-biT" id="aiT-gc-btn">
+                                        <button key="contentView" verticalHuggingPriority="1000" translatesAutoresizingMaskIntoConstraints="NO" id="aiT-rn-btn">
+                                            <rect key="frame" x="217" y="110" width="220" height="16"/>
+                                            <buttonCell key="cell" type="check" title="AI 翻译歌词 (AI Translation)" bezelStyle="regularSquare" imagePosition="left" state="on" inset="2" id="aiT-rn-cel">
+                                                <behavior key="behavior" changeContents="YES" doesNotDimImage="YES" lightByContents="YES"/>
+                                                <font key="font" metaFont="system"/>
+                                            </buttonCell>
+                                            <connections>
+                                                <binding destination="968-l4-9l5" name="value" keyPath="values.AITranslationEnabled" id="aiT-rn-bnd"/>
+                                            </connections>
+                                        </button>
+                                    </gridCell>
+                                    <gridCell row="aiT-gr-url" column="3Hg-Ka-QrM" id="aiU-c1-lbl">
+                                        <textField key="contentView" focusRingType="none" horizontalHuggingPriority="251" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="aiU-t1-lbl">
+                                            <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" sendsActionOnEndEditing="YES" alignment="right" title="AI 接口地址:" id="aiU-l1-cel">
+                                                <font key="font" metaFont="system"/>
+                                                <color key="textColor" name="labelColor" catalog="System" colorSpace="catalog"/>
+                                                <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
+                                            </textFieldCell>
+                                        </textField>
+                                    </gridCell>
+                                    <gridCell row="aiT-gr-url" column="IfN-lq-biT" id="aiU-c2-fld">
+                                        <textField key="contentView" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="aiU-t2-fld">
+                                            <constraints>
+                                                <constraint firstAttribute="width" constant="280" id="aiU-w2-cst"/>
+                                            </constraints>
+                                            <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" borderStyle="bezel" bezelStyle="round" placeholderString="https://api.deepseek.com/v1" drawsBackground="YES" id="aiU-f2-cel">
+                                                <font key="font" metaFont="system"/>
+                                                <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
+                                                <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
+                                            </textFieldCell>
+                                            <connections>
+                                                <binding destination="968-l4-9l5" name="value" keyPath="values.AITranslationBaseURL" id="aiU-b2-bnd">
+                                                    <dictionary key="options">
+                                                        <bool key="NSContinuouslyUpdatesValue" value="YES"/>
+                                                    </dictionary>
+                                                </binding>
+                                            </connections>
+                                        </textField>
+                                    </gridCell>
+                                    <gridCell row="aiT-gr-key" column="3Hg-Ka-QrM" id="aiK-c1-lbl">
+                                        <textField key="contentView" focusRingType="none" horizontalHuggingPriority="251" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="aiK-t1-lbl">
+                                            <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" sendsActionOnEndEditing="YES" alignment="right" title="API Key:" id="aiK-l1-cel">
+                                                <font key="font" metaFont="system"/>
+                                                <color key="textColor" name="labelColor" catalog="System" colorSpace="catalog"/>
+                                                <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
+                                            </textFieldCell>
+                                        </textField>
+                                    </gridCell>
+                                    <gridCell row="aiT-gr-key" column="IfN-lq-biT" id="aiK-c2-fld">
+                                        <secureTextField key="contentView" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="aiK-t2-fld">
+                                            <constraints>
+                                                <constraint firstAttribute="width" constant="280" id="aiK-w2-cst"/>
+                                            </constraints>
+                                            <secureTextFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" borderStyle="bezel" bezelStyle="round" placeholderString="sk-…" drawsBackground="YES" id="aiK-f2-cel">
+                                                <font key="font" metaFont="system"/>
+                                                <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
+                                                <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
+                                            </secureTextFieldCell>
+                                            <connections>
+                                                <binding destination="968-l4-9l5" name="value" keyPath="values.AITranslationAPIKey" id="aiK-b2-bnd">
+                                                    <dictionary key="options">
+                                                        <bool key="NSContinuouslyUpdatesValue" value="YES"/>
+                                                    </dictionary>
+                                                </binding>
+                                            </connections>
+                                        </secureTextField>
+                                    </gridCell>
+                                    <gridCell row="aiT-gr-mod" column="3Hg-Ka-QrM" id="aiM-c1-lbl">
+                                        <textField key="contentView" focusRingType="none" horizontalHuggingPriority="251" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="aiM-t1-lbl">
+                                            <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" sendsActionOnEndEditing="YES" alignment="right" title="模型 Model:" id="aiM-l1-cel">
+                                                <font key="font" metaFont="system"/>
+                                                <color key="textColor" name="labelColor" catalog="System" colorSpace="catalog"/>
+                                                <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
+                                            </textFieldCell>
+                                        </textField>
+                                    </gridCell>
+                                    <gridCell row="aiT-gr-mod" column="IfN-lq-biT" id="aiM-c2-fld">
+                                        <textField key="contentView" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="aiM-t2-fld">
+                                            <constraints>
+                                                <constraint firstAttribute="width" constant="280" id="aiM-w2-cst"/>
+                                            </constraints>
+                                            <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" borderStyle="bezel" bezelStyle="round" placeholderString="deepseek-chat" drawsBackground="YES" id="aiM-f2-cel">
+                                                <font key="font" metaFont="system"/>
+                                                <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
+                                                <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
+                                            </textFieldCell>
+                                            <connections>
+                                                <binding destination="968-l4-9l5" name="value" keyPath="values.AITranslationModel" id="aiM-b2-bnd">
+                                                    <dictionary key="options">
+                                                        <bool key="NSContinuouslyUpdatesValue" value="YES"/>
+                                                    </dictionary>
+                                                </binding>
+                                            </connections>
+                                        </textField>
+                                    </gridCell>
+                                    <gridCell row="aiT-gr-lng" column="3Hg-Ka-QrM" id="aiL-c1-lbl">
+                                        <textField key="contentView" focusRingType="none" horizontalHuggingPriority="251" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="aiL-t1-lbl">
+                                            <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" sendsActionOnEndEditing="YES" alignment="right" title="目标语言:" id="aiL-l1-cel">
+                                                <font key="font" metaFont="system"/>
+                                                <color key="textColor" name="labelColor" catalog="System" colorSpace="catalog"/>
+                                                <color key="backgroundColor" name="controlColor" catalog="System" colorSpace="catalog"/>
+                                            </textFieldCell>
+                                        </textField>
+                                    </gridCell>
+                                    <gridCell row="aiT-gr-lng" column="IfN-lq-biT" id="aiL-c2-fld">
+                                        <textField key="contentView" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="aiL-t2-fld">
+                                            <constraints>
+                                                <constraint firstAttribute="width" constant="280" id="aiL-w2-cst"/>
+                                            </constraints>
+                                            <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" borderStyle="bezel" bezelStyle="round" placeholderString="zh-Hans" drawsBackground="YES" id="aiL-f2-cel">
+                                                <font key="font" metaFont="system"/>
+                                                <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
+                                                <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
+                                            </textFieldCell>
+                                            <connections>
+                                                <binding destination="968-l4-9l5" name="value" keyPath="values.AITranslationTargetLanguage" id="aiL-b2-bnd">
+                                                    <dictionary key="options">
+                                                        <bool key="NSContinuouslyUpdatesValue" value="YES"/>
+                                                    </dictionary>
+                                                </binding>
+                                            </connections>
+                                        </textField>
                                     </gridCell>
                                     <gridCell row="8If-Ei-6qA" column="3Hg-Ka-QrM" id="1my-Ka-JRX">
                                         <textField key="contentView" focusRingType="none" horizontalHuggingPriority="251" verticalHuggingPriority="750" translatesAutoresizingMaskIntoConstraints="NO" id="kWS-OK-xdi">

@@ -88,7 +88,7 @@ class KaraokeLyricsWindowController: NSWindowController {
             .desktopLyricsFontSize,
             .desktopLyricsFontNameFallback,
         ], options: [.initial]) { [unowned self] in
-            self.lyricsView.font = defaults.desktopLyricsFont
+            self.lyricsView.baseFont = defaults.desktopLyricsFont
         }
 
         observeNotification(name: NSApplication.didChangeScreenParametersNotification, queue: .main) { [unowned self] _ in

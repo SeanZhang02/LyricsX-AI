@@ -147,13 +147,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
             return selectedPlayer.name == .appleMusic && AppController.shared.currentLyrics != nil
         case #selector(searchLyrics(_:))?:
             return selectedPlayer.currentTrack != nil
+        case #selector(aiTranslateCurrentAction(_:))?:
+            return AppController.shared.currentLyrics != nil && !AITranslationService.shared.isTranslating
         default:
             return true
         }
     }
 
+    @IBAction func aiTranslateCurrentAction(_ sender: Any?) {
+        AITranslationService.shared.translateNow(AppController.shared.currentLyrics)
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.item(withTag: 202)?.isEnabled = AppController.shared.currentLyrics != nil
+        if let aiItem = menu.item(withTag: 205) {
+            let translating = AITranslationService.shared.isTranslating
+            aiItem.title = translating ? NSLocalizedString("AI 翻译中…", comment: "") : NSLocalizedString("AI 翻译此歌词", comment: "")
+            aiItem.isEnabled = !translating && AppController.shared.currentLyrics != nil
+        }
     }
 
     // MARK: - Menubar Action
@@ -276,6 +287,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
             .chineseConversionIndex: isHant ? 2 : 0,
             .desktopLyricsXPositionFactor: 0.5,
             .desktopLyricsYPositionFactor: 0.9,
+            .aiTranslationEnabled: false,
+            .aiTranslationBaseURL: "",
+            .aiTranslationAPIKey: "",
+            .aiTranslationModel: "",
+            .aiTranslationTargetLanguage: isZh ? "zh-Hans" : "en",
         ])
     }
 

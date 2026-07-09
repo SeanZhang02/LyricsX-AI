@@ -58,7 +58,7 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>LX_BUILD_TIME</key>
-	<integer>1782055862</integer>
+	<integer>1783590965</integer>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSExceptionDomains</key>
@@ -166,8 +166,6 @@
 	<true/>
 	<key>SUEnableInstallerLauncherService</key>
 	<true/>
-	<key>SUFeedURL</key>
-	<string>https://mxiris-lyricsx-project.github.io/LyricsX/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>jlL11Arlrn0YtrQn66hxwUZeBI6dFxP2Wluq6eEYzss=</string>
 	<key>UTExportedTypeDeclarations</key>

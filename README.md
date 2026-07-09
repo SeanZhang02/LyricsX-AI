@@ -3,6 +3,11 @@
 > [!IMPORTANT]  
 > This is the version of LyricsX that I personally maintain. The original author seems to have stopped maintaining it. I will fix some remaining bugs and add some new features in my spare time.
 
+> [!NOTE]
+> 本 fork 基于 [MxIris-LyricsX-Project/LyricsX](https://github.com/MxIris-LyricsX-Project/LyricsX)，由 Claude (Anthropic) 增加了 **AI 歌词翻译**：歌词缺少翻译时自动（或从菜单栏"AI 翻译此歌词"手动）调用任意 OpenAI 兼容大模型接口（DeepSeek / OpenAI 等，在 偏好设置 → 通用 填入接口地址、API Key 与模型即可）逐行翻译，以 lrcx 原生翻译附件写回歌词文件实现双语显示，完成后有系统通知；另修复了桌面歌词超长行被截断的问题（自动缩小字号完整显示）。
+>
+> This fork adds **AI lyrics translation** (by Claude from Anthropic): lyrics without a translation are translated line-by-line via any OpenAI-compatible LLM API (set base URL / API key / model in Preferences → General, or trigger manually from the status menu), written back as native lrcx translation attachments for bilingual display, with a system notification on completion — plus a fix for overlong lyric lines being clipped on the desktop overlay.
+
 
 <img src="docs/img/icon.png" width="128px">
 

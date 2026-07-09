@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import UserNotifications
 import Regex
 import OpenCC
 import MusicPlayer
@@ -185,6 +186,7 @@ class AppController: NSObject {
                     lyrics.filtrate()
                     lyrics.recognizeLanguage()
                     currentLyrics = lyrics
+                    AITranslationService.shared.translateIfNeeded(lyrics)
                     return
                 }
             }
@@ -225,6 +227,7 @@ class AppController: NSObject {
                 lyrics.filtrate()
                 lyrics.recognizeLanguage()
                 currentLyrics = lyrics
+                AITranslationService.shared.translateIfNeeded(lyrics)
                 if needsSearching {
                     break
                 } else {
@@ -272,6 +275,7 @@ class AppController: NSObject {
                 if defaults[.writeToiTunesAutomatically] {
                     writeToiTunes(overwrite: true)
                 }
+                AITranslationService.shared.translateIfNeeded(currentLyrics)
             } catch is CancellationError {
                 // Search was cancelled due to track change
             } catch {
@@ -327,11 +331,278 @@ extension AppController {
         lrc.recognizeLanguage()
         lrc.metadata.needsPersist = true
         currentLyrics = lrc
+        AITranslationService.shared.translateIfNeeded(lrc)
         if let index = defaults[.noSearchingTrackIds].firstIndex(of: track.id) {
             defaults[.noSearchingTrackIds].remove(at: index)
         }
         if let index = defaults[.noSearchingAlbumNames].firstIndex(of: track.album ?? "") {
             defaults[.noSearchingAlbumNames].remove(at: index)
+        }
+    }
+}
+
+// MARK: - AI Translation
+
+private extension Lyrics.Metadata.Key {
+    static var aiTranslationAttempted = Lyrics.Metadata.Key("aiTranslationAttempted")
+}
+
+/// 歌词 AI 翻译中间件: 歌词加载后若无目标语言翻译, 调用 OpenAI 兼容接口逐行翻译,
+/// 以 [tr:lang] 附件形式写入歌词行并持久化到本地 lrcx 文件。
+class AITranslationService {
+
+    static let shared = AITranslationService()
+
+    /// 是否有翻译任务进行中 (菜单栏据此显示"翻译中…")
+    private(set) var isTranslating = false
+
+    private let queue = DispatchQueue(label: "com.JH.LyricsX.aiTranslation", qos: .utility)
+
+    /// 发送系统通知
+    private func notify(_ title: String, _ body: String) {
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+        }
+    }
+
+    private lazy var session: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 90
+        config.timeoutIntervalForResource = 120
+        return URLSession(configuration: config)
+    }()
+
+    /// 菜单手动触发: 无视自动开关与"已尝试"标记, 每种跳过原因都给出通知反馈
+    func translateNow(_ lyrics: Lyrics?) {
+        guard !defaults[.aiTranslationBaseURL].isEmpty,
+              !defaults[.aiTranslationAPIKey].isEmpty,
+              !defaults[.aiTranslationModel].isEmpty else {
+            notify("AI 翻译未配置", "请在 偏好设置 → 通用 填写接口地址、API Key 和模型")
+            return
+        }
+        guard let lyrics = lyrics else { return }
+        guard !lyrics.metadata.hasTranslation else {
+            notify("无需翻译", "这首歌已经有翻译了")
+            return
+        }
+        queue.async {
+            lyrics.metadata.data[.aiTranslationAttempted] = true
+            guard self.isTranslatable(lyrics) else {
+                self.notify("无需翻译", "歌词本身已是目标语言, 或太短(纯音乐)")
+                return
+            }
+            log("AI translation (manual) started for \(lyrics.metadata.title ?? "?")")
+            self.translate(lyrics)
+        }
+    }
+
+    func translateIfNeeded(_ lyrics: Lyrics?) {
+        guard defaults[.aiTranslationEnabled],
+              !defaults[.aiTranslationBaseURL].isEmpty,
+              !defaults[.aiTranslationAPIKey].isEmpty,
+              !defaults[.aiTranslationModel].isEmpty,
+              let lyrics = lyrics,
+              !lyrics.metadata.hasTranslation else {
+            return
+        }
+        queue.async {
+            guard lyrics.metadata.data[.aiTranslationAttempted] as? Bool != true else { return }
+            lyrics.metadata.data[.aiTranslationAttempted] = true
+            guard self.isTranslatable(lyrics) else { return }
+            log("AI translation started for \(lyrics.metadata.title ?? "?")")
+            self.translate(lyrics)
+        }
+    }
+
+    // MARK: 语言判定
+
+    /// 目标是中文时跳过中文歌; 歌词太短(纯音乐)也跳过
+    private func isTranslatable(_ lyrics: Lyrics) -> Bool {
+        let contents = lyrics.lines.map(\.content).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        guard contents.count >= 4 else { return false }
+        var kana = 0, han = 0, hangul = 0, latin = 0
+        for content in contents {
+            for scalar in content.unicodeScalars {
+                switch scalar.value {
+                case 0x3040...0x30FF, 0x31F0...0x31FF: kana += 1
+                case 0x4E00...0x9FFF, 0x3400...0x4DBF: han += 1
+                case 0xAC00...0xD7AF: hangul += 1
+                case 0x41...0x5A, 0x61...0x7A: latin += 1
+                default: break
+                }
+            }
+        }
+        let total = kana + han + hangul + latin
+        guard total >= 20 else { return false }
+        if defaults[.aiTranslationTargetLanguage].hasPrefix("zh") {
+            if kana >= 5 || hangul >= 5 { return true }
+            if Double(han) / Double(total) > 0.4 { return false }
+        }
+        return true
+    }
+
+    // MARK: 翻译流程
+
+    private func translate(_ lyrics: Lyrics) {
+        let targetCode = defaults[.aiTranslationTargetLanguage].isEmpty ? "zh-Hans" : defaults[.aiTranslationTargetLanguage]
+        let tag = LyricsLine.Attachments.Tag.translation(languageCode: targetCode)
+
+        var indices: [Int] = []
+        for (i, line) in lyrics.lines.enumerated() {
+            let content = line.content.trimmingCharacters(in: .whitespaces)
+            if !content.isEmpty, line.attachments[tag] == nil {
+                indices.append(i)
+            }
+        }
+        guard !indices.isEmpty else { return }
+
+        let title = [lyrics.metadata.title, lyrics.metadata.artist].compactMap { $0 }.joined(separator: " - ")
+        isTranslating = true
+        defer { isTranslating = false }
+        var results: [Int: String] = [:]
+        let chunkSize = 100
+        var start = 0
+        while start < indices.count {
+            let chunk = Array(indices[start ..< min(start + chunkSize, indices.count)])
+            guard let answer = requestTranslation(
+                of: chunk.map { lyrics.lines[$0].content },
+                title: title,
+                targetCode: targetCode
+            ) else {
+                log("AI translation request failed for \(title)")
+                notify("AI 翻译失败", "《\(title)》网络请求失败, 稍后可从菜单重试")
+                return
+            }
+            parseAnswer(answer, chunk: chunk, lyrics: lyrics, into: &results)
+            start += chunkSize
+        }
+        // 覆盖率过低视为失败, 防止错位的结果污染歌词文件
+        guard results.count * 2 >= indices.count else {
+            log("AI translation coverage too low for \(title): \(results.count)/\(indices.count)")
+            notify("AI 翻译失败", "《\(title)》译文校验未通过, 已放弃本次结果")
+            return
+        }
+
+        DispatchQueue.lyricsDisplay.async {
+            for (i, text) in results {
+                lyrics.lines[i].attachments[tag] = text
+            }
+            lyrics.metadata.attachmentTags.insert(tag)
+            lyrics.metadata.needsPersist = true
+            lyrics.persist()
+            let appController = AppController.shared
+            if appController.currentLyrics === lyrics {
+                // 触发一次行刷新, 让当前行立即显示译文
+                appController.currentLineIndex = nil
+                appController.scheduleCurrentLineCheck()
+            }
+            log("AI translation finished for \(title): \(results.count)/\(indices.count) lines")
+            self.notify("AI 翻译完成", "《\(title)》已翻译 \(results.count) 行, 歌词已实时更新")
+        }
+    }
+
+    private func languageName(of code: String) -> String {
+        switch code {
+        case "zh-Hans": return "简体中文"
+        case "zh-Hant": return "繁體中文"
+        case let c where c.hasPrefix("zh"): return "简体中文"
+        case "en": return "English"
+        case "ja": return "日本語"
+        default: return code
+        }
+    }
+
+    private func buildPrompt(of contents: [String], title: String, targetCode: String) -> String {
+        let target = languageName(of: targetCode)
+        let numbered = contents.enumerated().map { "\($0.offset + 1)|\($0.element)" }.joined(separator: "\n")
+        return """
+        你是一位资深的歌词译者。将下面的歌词逐行翻译成\(target)。
+
+        要求:
+        - 只输出翻译结果, 每行格式为「编号|译文」, 编号与输入一一对应; 不合并、不拆分、不遗漏、不添加任何解释
+        - 先领会整首歌的叙事、情绪与意象, 再逐行落笔, 全篇保持语气与人称一致
+        - 传达意境而非字面对应: 译出歌词的画面感与言外之意, 用词凝练, 有中文歌词的韵律与诗意
+        - 俚语、双关与文化梗用贴切的中文意象转译, 宁可意译不可生硬直译
+        - 如果某行是纯人名/制作信息(词、曲、编曲、制作人等)、无实义拟声词(如 la la la)、或本身已是\(target), 该行输出「编号|-」
+
+        歌曲: \(title)
+
+        \(numbered)
+        """
+    }
+
+    private func requestTranslation(of contents: [String], title: String, targetCode: String) -> String? {
+        var base = defaults[.aiTranslationBaseURL]
+        while base.hasSuffix("/") { base.removeLast() }
+        guard let url = URL(string: base + "/chat/completions") else { return nil }
+        let prompt = buildPrompt(of: contents, title: title, targetCode: targetCode)
+        let body: [String: Any] = [
+            "model": defaults[.aiTranslationModel],
+            "messages": [["role": "user", "content": prompt]],
+        ]
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer " + defaults[.aiTranslationAPIKey], forHTTPHeaderField: "Authorization")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        for attempt in 1...2 {
+            if let answer = performRequest(request) {
+                return answer
+            }
+            if attempt == 1 {
+                Thread.sleep(forTimeInterval: 5)
+            }
+        }
+        return nil
+    }
+
+    private func performRequest(_ request: URLRequest) -> String? {
+        var answer: String?
+        let semaphore = DispatchSemaphore(value: 0)
+        let task = session.dataTask(with: request) { data, response, error in
+            defer { semaphore.signal() }
+            if let error = error {
+                log("AI translation network error: \(error.localizedDescription)")
+                return
+            }
+            guard let data = data else { return }
+            guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+            if let status = (response as? HTTPURLResponse)?.statusCode, status != 200 {
+                log("AI translation HTTP \(status): \(String(data: data, encoding: .utf8)?.prefix(200) ?? "")")
+                return
+            }
+            let choices = object["choices"] as? [[String: Any]]
+            let message = choices?.first?["message"] as? [String: Any]
+            answer = message?["content"] as? String
+        }
+        task.resume()
+        if semaphore.wait(timeout: .now() + 130) == .timedOut {
+            task.cancel()
+            log("AI translation request timed out")
+        }
+        return answer
+    }
+
+    private func parseAnswer(_ answer: String, chunk: [Int], lyrics: Lyrics, into results: inout [Int: String]) {
+        for raw in answer.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard let sep = line.firstIndex(where: { $0 == "|" || $0 == "｜" }),
+                  let n = Int(line[..<sep].trimmingCharacters(in: .whitespaces)),
+                  n >= 1, n <= chunk.count else {
+                continue
+            }
+            let text = String(line[line.index(after: sep)...]).trimmingCharacters(in: .whitespaces)
+            guard !text.isEmpty, text != "-" else { continue }
+            let lineIndex = chunk[n - 1]
+            if text != lyrics.lines[lineIndex].content.trimmingCharacters(in: .whitespaces) {
+                results[lineIndex] = text
+            }
         }
     }
 }
