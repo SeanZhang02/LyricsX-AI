@@ -4,5 +4,27 @@
 <dict>
 	<key>method</key>
 	<string>developer-id</string>
+	<!-- Pin the profiles by name. With signingStyle unset, exportArchive
+	     defaults to automatic and resolves profiles through the ASC API
+	     instead of the ones setup-keychain.sh installs under
+	     ~/Library/MobileDevice/Provisioning Profiles/. build.sh deliberately
+	     omits -allowProvisioningUpdates at export, so that lookup fails with
+	     "No profiles for <bundle id> were found". It went unnoticed while the
+	     secrets held Xcode-managed "Mac Team Direct Provisioning Profile"
+	     profiles, which automatic signing could still match; they were
+	     replaced on 2026-06-28 by the named profiles below.
+
+	     No LyricsXWidget entry — that target exists only on the 1.9 line. -->
+	<key>signingStyle</key>
+	<string>manual</string>
+	<key>signingCertificate</key>
+	<string>Developer ID Application</string>
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>com.JH.LyricsX</key>
+		<string>LyricsX Developer ID</string>
+		<key>com.JH.LyricsXHelper</key>
+		<string>LyricsXHelper Developer ID</string>
+	</dict>
 </dict>
 </plist>
