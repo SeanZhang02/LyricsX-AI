@@ -5,6 +5,7 @@ import ScriptingBridge
 class AppDelegate: NSObject, NSApplicationDelegate {
     var musicPlayers: [SBApplication] = []
     var shouldWaitForPlayerQuit = false
+    var isLaunchingMainApplication = false
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
         guard sharedDefaults.bool(forKey: launchAndQuitWithPlayer) else {
@@ -51,22 +52,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func launchMainAndQuit() {
-        var host = Bundle.main.bundleURL
+        // Workspace launch/terminate notifications can re-enter this method
+        // while the asynchronous open request below is still in flight.
+        guard !isLaunchingMainApplication else { return }
+        isLaunchingMainApplication = true
+
+        var hostApplicationURL = Bundle.main.bundleURL
         for _ in 0 ..< 4 {
-            host.deleteLastPathComponent()
+            hostApplicationURL.deleteLastPathComponent()
         }
-        NSWorkspace.shared.openApplication(at: host, configuration: .init()) { [weak self] app, error in
-            defer {
-                NSApp.terminate(nil)
-                abort() // fake invoking, just make compiler happy.
-            }
 
-            guard let self else { return }
+        // Opening an already-running app delivers a reopen event, which the
+        // main app answers by showing its preferences window. Quit instead.
+        if let hostBundleIdentifier = Bundle(url: hostApplicationURL)?.bundleIdentifier,
+           !NSRunningApplication.runningApplications(withBundleIdentifier: hostBundleIdentifier).isEmpty {
+            NSApp.terminate(nil)
+            return
+        }
 
+        NSWorkspace.shared.openApplication(at: hostApplicationURL, configuration: .init()) { _, error in
             if let error {
                 NSLog("launch LyricsX failed. reason: \(error)")
             } else {
                 NSLog("launch LyricsX succeed.")
+            }
+            // This handler runs on a background queue, where NSApplication's
+            // termination sequence cannot run: terminate(_:) returns instead
+            // of exiting, and any code after it (formerly an abort()) brings
+            // the process down with SIGABRT — which launchd treats as a
+            // login-item crash and answers with an endless relaunch loop.
+            DispatchQueue.main.async {
+                NSApp.terminate(nil)
             }
         }
     }
