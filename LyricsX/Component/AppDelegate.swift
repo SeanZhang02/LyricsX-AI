@@ -292,6 +292,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
             .aiTranslationAPIKey: "",
             .aiTranslationModel: "anthropic/claude-opus-4.8",
             .aiTranslationTargetLanguage: isZh ? "zh-Hans" : "en",
+            .strictSearchEnabled: false,
         ])
     }
 

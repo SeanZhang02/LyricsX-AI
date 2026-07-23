@@ -72,20 +72,32 @@ class AppController: NSObject {
 
     @MainActor
     func updateLyricsManager() async throws {
-        let services: [LyricsProviders.Service] = LyricsProviders.Service.noAuthenticationRequiredServices
-
-        var providers: [LyricsProvider] = []
-        for service in services {
-            providers.append(service.create())
+        // Musixmatch(已含在 noAuthenticationRequiredServices)每次请求从 AuthenticationManagerStore 读 token。
+        // 手填优先, 否则用自动拉取并缓存的 token; 先注入本地缓存(快)压首曲竞态, 再后台刷新。
+        let manual = defaults[.musixmatchToken]
+        let cached = (manual?.isEmpty == false) ? manual : defaults[.musixmatchAutoToken]
+        if let token = cached, !token.isEmpty {
+            await AuthenticationManagerStore.shared.setMusixmatchToken(token)
         }
 
-        // Add Musixmatch provider with saved token if available
-        if let token = defaults[.musixmatchToken], !token.isEmpty {
-            let musixmatchProvider = LyricsProviders.Musixmatch(usertoken: token)
-            providers.append(musixmatchProvider)
-        }
+        let services = LyricsProviders.Service.noAuthenticationRequiredServices
+        lyricsManager = LyricsProviders.Group(providers: services.map { $0.create() })
 
-        lyricsManager = LyricsProviders.Group(providers: providers)
+        // 手填为空时后台刷新自动 token(共享 trial token 会限流失效, 每次启动重拉一次)
+        if manual?.isEmpty != false {
+            refreshMusixmatchAutoToken()
+        }
+    }
+
+    /// 后台从 token.get 拉一个 Musixmatch usertoken, 成功则覆盖缓存并注入 store; 失败保留旧缓存。
+    private func refreshMusixmatchAutoToken() {
+        Task {
+            guard let token = await MusixmatchToken.fetch() else { return }
+            defaults[.musixmatchAutoToken] = token
+            // 拉取期间用户可能刚在 Lab 粘了手填 token, 手填优先, 别覆盖
+            guard defaults[.musixmatchToken]?.isEmpty != false else { return }
+            await AuthenticationManagerStore.shared.setMusixmatchToken(token)
+        }
     }
 
     var currentLineCheckSchedule: Cancellable?
@@ -242,7 +254,11 @@ class AppController: NSObject {
         }
 
         let duration = track.duration ?? 0
-        let request = LyricsSearchRequest(searchTerm: .info(title: title, artist: artist), duration: duration, limit: 5)
+        // 清洗查询串(去 (Live)/[feat…] 等版本噪声, 提升召回); 原始 title/artist 不变(缓存文件名 + 匹配门要用)
+        let request = LyricsSearchRequest(
+            searchTerm: .info(title: cleanSearchTitle(title), artist: cleanSearchArtist(artist)),
+            duration: duration, limit: 5
+        )
         searchRequest = request
         searchTask = Task { @MainActor in
             do {
@@ -297,7 +313,11 @@ class AppController: NSObject {
         if defaults[.strictSearchEnabled], !lyrics.isMatched() {
             return
         }
-        if let current = currentLyrics, !lyricsHasHigherPriority(lyrics, over: current) {
+        // 匹配门:拒绝与查询完全不相干的候选(治西语→日语粗错), 放在落盘/写 iTunes/发布之前
+        guard passesMatchFloor(lyrics, request: req, rawTitle: track.title ?? "", rawArtist: track.artist ?? "", trackDuration: track.duration) else {
+            return
+        }
+        if let current = currentLyrics, !lyricsHasHigherPriority(lyrics, over: current, trackAlbum: track.album) {
             return
         }
 

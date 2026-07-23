@@ -163,6 +163,7 @@ extension UserDefaults.DefaultsKeys {
     static let globalLyricsOffset = Key<Int>("GlobalLyricsOffset")
 
     static let musixmatchToken = Key<String?>("MusixmatchToken")
+    static let musixmatchAutoToken = Key<String?>("MusixmatchAutoToken")
 
     //
     static let isInMASReview = Key<Bool?>("isInMASReview")
@@ -181,7 +182,7 @@ extension UserDefaults.DefaultsKeys {
 
 // MARK: - Lyrics Priority
 
-func lyricsHasHigherPriority(_ new: Lyrics, over existing: Lyrics) -> Bool {
+func lyricsHasHigherPriority(_ new: Lyrics, over existing: Lyrics, trackAlbum: String? = nil) -> Bool {
     if defaults[.lyricsSourcePriorityEnabled] {
         let sourceOrder = defaults[.lyricsSourcePriorityOrder] ?? []
         let normalizedOrder = sourceOrder.map { $0.lowercased() }
@@ -197,7 +198,8 @@ func lyricsHasHigherPriority(_ new: Lyrics, over existing: Lyrics) -> Bool {
         }
     }
 
-    return new.quality > existing.quality
+    // 用 app 侧择优分(NaN-free, 含专辑软信号)替代 LyricsKit 1.8.3 有 NaN bug 的 quality
+    return appMatchScore(new, trackAlbum: trackAlbum) > appMatchScore(existing, trackAlbum: trackAlbum)
 }
 
 extension CGFloat: @retroactive DefaultConstructible {}
