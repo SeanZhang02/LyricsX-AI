@@ -150,6 +150,8 @@ class SearchLyricsViewController: NSViewController, NSTableViewDelegate, NSTable
             return searchResult[row].idTags[.artist] ?? "[lacking]"
         case .searchResultColumnSource:
             return searchResult[row].metadata.service ?? "[lacking]"
+        case .searchResultColumnAlbum:
+            return searchResult[row].idTags[.album] ?? ""
         default:
             return nil
         }

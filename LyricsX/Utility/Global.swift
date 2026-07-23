@@ -61,6 +61,7 @@ extension NSUserInterfaceItemIdentifier {
     static let searchResultColumnTitle = NSUserInterfaceItemIdentifier("SearchResult.TableColumn.Title")
     static let searchResultColumnArtist = NSUserInterfaceItemIdentifier("SearchResult.TableColumn.Artist")
     static let searchResultColumnSource = NSUserInterfaceItemIdentifier("SearchResult.TableColumn.Source")
+    static let searchResultColumnAlbum = NSUserInterfaceItemIdentifier("SearchResult.TableColumn.Album")
 }
 
 extension NSStoryboard.SceneIdentifier {
