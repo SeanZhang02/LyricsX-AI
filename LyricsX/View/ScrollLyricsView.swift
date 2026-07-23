@@ -65,9 +65,9 @@ class ScrollLyricsView: NSScrollView {
 
         for line in enabledLrc {
             var lineStr = line.content
-            if var trans = line.attachments[.translation(languageCode: languageCode)], defaults[.preferBilingualLyrics],
-               languageCode?.hasPrefix("zh") == true {
-                if let converter = ChineseConverter.shared {
+            if var trans = line.attachments[.translation(languageCode: languageCode)], defaults[.preferBilingualLyrics] {
+                // Show any translation (some sources mislabel a Chinese translation as e.g. es); the simplified/traditional converter only applies to Chinese.
+                if languageCode?.hasPrefix("zh") == true, let converter = ChineseConverter.shared {
                     trans = converter.convert(trans)
                 }
                 lineStr += "\n" + trans
