@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import NaturalLanguage
 import UserNotifications
 import Regex
 import OpenCC
@@ -421,29 +422,30 @@ class AITranslationService {
 
     // MARK: 语言判定
 
-    /// 目标是中文时跳过中文歌; 歌词太短(纯音乐)也跳过
+    /// 用系统 NaturalLanguage 框架离线识别源语言(无网络、无第三方依赖):
+    /// 歌词本身已是目标语言(如中文歌 → 中译中)或太短(纯音乐)时跳过, 不调用 LLM。
     private func isTranslatable(_ lyrics: Lyrics) -> Bool {
         let contents = lyrics.lines.map(\.content).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         guard contents.count >= 4 else { return false }
-        var kana = 0, han = 0, hangul = 0, latin = 0
-        for content in contents {
-            for scalar in content.unicodeScalars {
-                switch scalar.value {
-                case 0x3040...0x30FF, 0x31F0...0x31FF: kana += 1
-                case 0x4E00...0x9FFF, 0x3400...0x4DBF: han += 1
-                case 0xAC00...0xD7AF: hangul += 1
-                case 0x41...0x5A, 0x61...0x7A: latin += 1
-                default: break
-                }
-            }
+
+        let target = defaults[.aiTranslationTargetLanguage].isEmpty
+            ? "zh-Hans" : defaults[.aiTranslationTargetLanguage]
+
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(contents.joined(separator: "\n"))
+        // 识别不出(文本太短/多语混排)时偏向翻译 —— 逐行 prompt 会把已是目标语言的行输出「编号|-」兜底
+        let hypotheses = recognizer.languageHypotheses(withMaximum: 3)
+        let targetConfidence = hypotheses.first { languageMatches($0.key.rawValue, target) }?.value ?? 0
+        // 目标语言置信度足够高 → 判定歌词本身已是目标语言, 跳过翻译
+        return targetConfidence < 0.65
+    }
+
+    /// 按 BCP-47 主子标签比较语言代码: "zh" ~ "zh-Hans" ~ "zh-Hant", "en" ~ "en-US"
+    private func languageMatches(_ a: String, _ b: String) -> Bool {
+        func primary(_ code: String) -> String {
+            (code.split(separator: "-").first.map(String.init) ?? code).lowercased()
         }
-        let total = kana + han + hangul + latin
-        guard total >= 20 else { return false }
-        if defaults[.aiTranslationTargetLanguage].hasPrefix("zh") {
-            if kana >= 5 || hangul >= 5 { return true }
-            if Double(han) / Double(total) > 0.4 { return false }
-        }
-        return true
+        return primary(a) == primary(b)
     }
 
     // MARK: 翻译流程
