@@ -26,13 +26,13 @@
 
 | Key | 新默认值 | 说明 |
 |---|---|---|
-| `AITranslationBaseURL` | `https://openrouter.ai/api/v1` | 原为空;现"填 key 即用" |
+| `AITranslationBaseURL` | `https://openrouter.ai/api/v1` | 原为空;设默认后自动路径只差"开开关 + 填 key" |
 | `AITranslationModel` | `anthropic/claude-opus-4.8` | 主模型 |
 | `AITranslationAPIKey` | (空) | 用户填自己的 OpenRouter key;空 → 现有守卫不触发 |
-| `AITranslationTargetLanguage` | `zh-Hans` | 不变 |
-| `AITranslationEnabled` | 维持现状 | 用户在 偏好设置 → 通用 里开 |
+| `AITranslationTargetLanguage` | **维持 `isZh ? "zh-Hans" : "en"`**(`AppDelegate.swift:294`) | **此行代码不动**。中文 locale → zh-Hans、英文 locale → en(按用户语言翻译),与 `isTranslatable` 检测一致 |
+| `AITranslationEnabled` | 维持现状(默认 false) | 付费功能 opt-in。**自动翻译需"开关 + key"两步**;菜单「AI 翻译此歌词」(`translateNow`,不查 enabled)只需 key |
 
-### B. Prompt 替换(`buildPrompt`,`AppController.swift:520`)
+### B. Prompt 替换(`buildPrompt`,`AppController.swift:522`,行号以符号为准)
 
 整段替换为下列内容(`target = languageName(of: targetCode)`,`title`/`numbered` 同现状):
 
@@ -72,21 +72,45 @@ let primary = defaults[.aiTranslationModel].isEmpty ? "anthropic/claude-opus-4.8
 let chain = [primary] + fallbackModels.filter { $0 != primary }
 ```
 
-`performRequest` 改为返回三态结果(替换现在的 `String?`):
+**签名不变、返回值改**:`performRequest` 仍收 `URLRequest`,返回类型从 `String?` 改为下面三态枚举;`requestTranslation` 在链循环内**逐 model 重建 `URLRequest`**(body 含 `model` + `"temperature": 0`),body 构建逻辑仍留在 `requestTranslation`。
 
 ```
 private enum RequestOutcome {
-    case success(String)   // HTTP 200 且 content 非空
-    case authFailure       // HTTP 401 / 403
-    case hardFailure       // 网络错误 / 超时 / 其它非 200 / 空 content
+    case success(String)   // 仅"HTTP 200 且 content 非空"
+    case authFailure       // HTTP 401 / 403(无条件, 不看 body 能否解析)
+    case hardFailure       // 兜底: 网络错误 / 超时 / 其它非 200 / 空 content / JSON 解析失败
 }
 ```
 
-`requestTranslation` 遍历链:
+**`performRequest` 闭包改造规则(关键,防 401 误判)** —— 现有代码 `:577` 先 `JSONSerialization` 解析、`:578` 才看状态码,**顺序必须调换**(自定义 base/代理网关的 401/403 常返回非 JSON 的 HTML,旧顺序会把它误判成 hardFailure、烧完整条链并弹错误的"网络请求失败",击穿"401 立即中止"卖点):
+```
+var outcome: RequestOutcome = .hardFailure          // 兜底: error / data=nil / JSON失败 / 超时 都落这
+if error == nil, let http = response as? HTTPURLResponse {
+    if http.statusCode == 401 || http.statusCode == 403 {
+        outcome = .authFailure                       // ★先判状态码, 无条件, 早于 JSON 解析
+    } else if http.statusCode == 200, let data,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let content = ((obj["choices"] as? [[String: Any]])?.first?["message"]
+                             as? [String: Any])?["content"] as? String,
+              !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        outcome = .success(content)
+    }
+    // 其它状态码(400/429/5xx…)保持 .hardFailure
+}
+// semaphore 超时 / error 非 nil 分支: 保持 .hardFailure
+```
+
+`requestTranslation` 遍历链(**含 URL guard 通知**,保证每个 nil 出口都有通知):
 
 ```
+var base = defaults[.aiTranslationBaseURL]; while base.hasSuffix("/") { base.removeLast() }
+guard let url = URL(string: base + "/chat/completions") else {
+    notify("AI 翻译失败", "接口地址无效, 请检查 偏好设置 → 通用")   // ★补: 原本静默 return nil
+    return nil
+}
 for model in chain {
-    switch performRequest(for: model, of: contents, title: title, targetCode: targetCode) {
+    let request = /* 用 url + model + temperature:0 构建的 URLRequest */
+    switch performRequest(request) {
     case .success(let answer):
         return (answer, model)              // 返回译文 + 实际用的模型
     case .authFailure:
@@ -106,9 +130,9 @@ return nil                                  // 全链硬失败
 - **失败通知归 `requestTranslation` 独占**:authFailure → "API Key 无效";全链 hardFailure → "网络请求失败"。`translate()` 收到 `nil` **直接 `return`,不再自己弹通知**(移除现有 `translate` guard-else 里的 `notify("AI 翻译失败", …网络请求失败…)`),避免 key 错时双重/错误通知。
 - **Fallback 是 chunk 粒度**:`translate()` 每个 100 行 chunk 调一次 `requestTranslation`,各自独立走链。>100 行长歌罕见,极端下前后 chunk 可能落在不同模型,质量相近可接受。
 
-### D. 成功通知带模型名(`translate`,`AppController.swift:451`)
+### D. 成功通知带模型名(`translate`,`AppController.swift:453`)
 
-`translate` 收到 `(answer, usedModel)`;成功通知改为:「《歌》已用 <短名> 翻译 N 行, 歌词已实时更新」。短名映射:`opus-4.8→opus4.8`、`sonnet-5→sonnet5`、`deepseek-chat-v3.1→deepseek`,其它取 model id 末段。
+`translate` 每 chunk 收到 `(answer, usedModel)`;成功通知里的模型名取**最后一个成功 chunk 所用模型**(多 chunk 混用极罕见,取末次即可,不去重列全)。通知:「《歌》已用 <短名> 翻译 N 行, 歌词已实时更新」。短名映射:`opus-4.8→opus4.8`、`sonnet-5→sonnet5`、`deepseek-chat-v3.1→deepseek`,其它取 model id 末段。
 
 ### E. 不变的契约(红线)
 
@@ -120,6 +144,8 @@ return nil                                  // 全链硬失败
 ## 不在本 spec 范围
 
 H1 copy-then-publish、H2 覆盖率分层、H3 拒译内容校验、H4 sanitize、**H5 的 max_tokens / finish_reason**、H7 手动搜索面板 hook、H8 `isTranslating` 锁、P3(剥署名/制作信息行、名曲保留自带译文优先)。
+
+> 注:本 spec 的"401/403 不重试 + 专属通知""去掉单模型退避"与 **H6**(错误分类)有重叠。合并后需把 `HARDENING_TODO.md` 的 H6 剩余项(session 负缓存、拒译独立通知)重新 base 到新 fallback 结构上,避免 PR-B 撞车。
 
 ## 改动文件
 
