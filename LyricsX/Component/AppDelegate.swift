@@ -288,9 +288,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSMenu
             .desktopLyricsXPositionFactor: 0.5,
             .desktopLyricsYPositionFactor: 0.9,
             .aiTranslationEnabled: false,
-            .aiTranslationBaseURL: "",
+            .aiTranslationBaseURL: "https://openrouter.ai/api/v1",
             .aiTranslationAPIKey: "",
-            .aiTranslationModel: "",
+            .aiTranslationModel: "anthropic/claude-opus-4.8",
             .aiTranslationTargetLanguage: isZh ? "zh-Hans" : "en",
         ])
     }
