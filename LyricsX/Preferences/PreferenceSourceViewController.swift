@@ -11,7 +11,8 @@ class PreferenceSourceViewController: PreferenceViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        availableSources = LyricsProviders.Service.allCases.map(\.displayName)
+        // 只列真正启用的源(noAuthenticationRequiredServices);Spotify 需登录鉴权、未接入, 不显示死条目
+        availableSources = LyricsProviders.Service.noAuthenticationRequiredServices.map(\.displayName)
 
         enableSourcePriorityButton.state = defaults[.lyricsSourcePriorityEnabled] ? .on : .off
         sourcePriorityOrder = defaults[.lyricsSourcePriorityOrder] ?? availableSources
