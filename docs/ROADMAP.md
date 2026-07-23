@@ -96,10 +96,11 @@ xcodebuild -project LyricsX.xcodeproj -scheme LyricsX -configuration Debug build
 - **Allen 安装 unsigned build (必须走终端, 每个新 build 都要重做)**:
   ```bash
   cd ~/Downloads && unzip LyricsX-unsigned-<sha>.zip
-  xattr -cr LyricsX.app        # 清 quarantine, 必须
-  open LyricsX.app
+  # 注意: Debug 产物名是 LyricsX-Debug.app (MxIris 上游约定)
+  xattr -cr LyricsX-Debug.app        # 清 quarantine, 必须
+  open LyricsX-Debug.app
   # Apple Silicon 若报「已损坏」(不是"未知开发者"): 补 ad-hoc 自签再开
-  codesign --force --deep --sign - LyricsX.app && open LyricsX.app
+  codesign --force --deep --sign - LyricsX-Debug.app && open LyricsX-Debug.app
   ```
   注意: 「右键 → 打开」对彻底 unsigned 的 arm64 二进制**无效**, 别在这上面卡住。
 

@@ -46,9 +46,10 @@ jobs:
         id: locate
         run: |
           set -euo pipefail
-          APP_PATH="build/DerivedData/Build/Products/Debug/LyricsX.app"
-          if [ ! -d "$APP_PATH" ]; then
-            echo "Build did not produce $APP_PATH" >&2
+          # Debug 配置的产物名是 LyricsX-Debug.app (MxIris 上游约定), 用 glob 定位主 app, 排除 Helper
+          APP_PATH="$(find build/DerivedData/Build/Products/Debug -maxdepth 1 -name '*.app' ! -name 'LyricsXHelper.app' | head -1)"
+          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+            echo "Build did not produce a .app bundle" >&2
             find build/DerivedData/Build/Products -maxdepth 2 >&2 || true
             exit 1
           fi
