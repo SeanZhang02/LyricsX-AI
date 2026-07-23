@@ -274,7 +274,8 @@ class AppController: NSObject {
                 }
 
                 if defaults[.writeToiTunesAutomatically] {
-                    writeToiTunes(overwrite: true)
+                    // 不覆盖已有 Apple 歌词, 保住 Apple Music 的逐词同步(仅当曲目无歌词时写)
+                    writeToiTunes(overwrite: false)
                 }
                 AITranslationService.shared.translateIfNeeded(currentLyrics)
             } catch is CancellationError {
