@@ -576,7 +576,7 @@
                                             <constraints>
                                                 <constraint firstAttribute="width" constant="280" id="aiU-w2-cst"/>
                                             </constraints>
-                                            <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" borderStyle="bezel" bezelStyle="round" placeholderString="https://api.deepseek.com/v1" drawsBackground="YES" id="aiU-f2-cel">
+                                            <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" borderStyle="bezel" bezelStyle="round" placeholderString="https://openrouter.ai/api/v1" drawsBackground="YES" usesSingleLineMode="YES" id="aiU-f2-cel">
                                                 <font key="font" metaFont="system"/>
                                                 <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
@@ -632,7 +632,7 @@
                                             <constraints>
                                                 <constraint firstAttribute="width" constant="280" id="aiM-w2-cst"/>
                                             </constraints>
-                                            <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" borderStyle="bezel" bezelStyle="round" placeholderString="deepseek-chat" drawsBackground="YES" id="aiM-f2-cel">
+                                            <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" borderStyle="bezel" bezelStyle="round" placeholderString="anthropic/claude-opus-4.8" drawsBackground="YES" usesSingleLineMode="YES" id="aiM-f2-cel">
                                                 <font key="font" metaFont="system"/>
                                                 <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>
@@ -660,7 +660,7 @@
                                             <constraints>
                                                 <constraint firstAttribute="width" constant="280" id="aiL-w2-cst"/>
                                             </constraints>
-                                            <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" borderStyle="bezel" bezelStyle="round" placeholderString="zh-Hans" drawsBackground="YES" id="aiL-f2-cel">
+                                            <textFieldCell key="cell" scrollable="YES" lineBreakMode="clipping" selectable="YES" editable="YES" sendsActionOnEndEditing="YES" borderStyle="bezel" bezelStyle="round" placeholderString="zh-Hans" drawsBackground="YES" usesSingleLineMode="YES" id="aiL-f2-cel">
                                                 <font key="font" metaFont="system"/>
                                                 <color key="textColor" name="controlTextColor" catalog="System" colorSpace="catalog"/>
                                                 <color key="backgroundColor" name="textBackgroundColor" catalog="System" colorSpace="catalog"/>

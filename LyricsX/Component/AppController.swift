@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import NaturalLanguage
 import UserNotifications
 import Regex
 import OpenCC
@@ -273,7 +274,8 @@ class AppController: NSObject {
                 }
 
                 if defaults[.writeToiTunesAutomatically] {
-                    writeToiTunes(overwrite: true)
+                    // 不覆盖已有 Apple 歌词, 保住 Apple Music 的逐词同步(仅当曲目无歌词时写)
+                    writeToiTunes(overwrite: false)
                 }
                 AITranslationService.shared.translateIfNeeded(currentLyrics)
             } catch is CancellationError {
@@ -358,6 +360,15 @@ class AITranslationService {
 
     private let queue = DispatchQueue(label: "com.JH.LyricsX.aiTranslation", qos: .utility)
 
+    /// 主模型硬失败时依次尝试的备选(同一 OpenRouter key 只换 model 字段)
+    private let fallbackModels = ["anthropic/claude-sonnet-5", "deepseek/deepseek-chat-v3.1"]
+
+    private enum RequestOutcome {
+        case success(String)   // 仅 "HTTP 200 且 content 非空"
+        case authFailure       // HTTP 401 / 403
+        case hardFailure       // 网络错误 / 超时 / 其它非 200 / 空 content / JSON 解析失败
+    }
+
     /// 发送系统通知
     private func notify(_ title: String, _ body: String) {
         let center = UNUserNotificationCenter.current()
@@ -421,29 +432,30 @@ class AITranslationService {
 
     // MARK: 语言判定
 
-    /// 目标是中文时跳过中文歌; 歌词太短(纯音乐)也跳过
+    /// 用系统 NaturalLanguage 框架离线识别源语言(无网络、无第三方依赖):
+    /// 歌词本身已是目标语言(如中文歌 → 中译中)或太短(纯音乐)时跳过, 不调用 LLM。
     private func isTranslatable(_ lyrics: Lyrics) -> Bool {
         let contents = lyrics.lines.map(\.content).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         guard contents.count >= 4 else { return false }
-        var kana = 0, han = 0, hangul = 0, latin = 0
-        for content in contents {
-            for scalar in content.unicodeScalars {
-                switch scalar.value {
-                case 0x3040...0x30FF, 0x31F0...0x31FF: kana += 1
-                case 0x4E00...0x9FFF, 0x3400...0x4DBF: han += 1
-                case 0xAC00...0xD7AF: hangul += 1
-                case 0x41...0x5A, 0x61...0x7A: latin += 1
-                default: break
-                }
-            }
+
+        let target = defaults[.aiTranslationTargetLanguage].isEmpty
+            ? "zh-Hans" : defaults[.aiTranslationTargetLanguage]
+
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(contents.joined(separator: "\n"))
+        // 识别不出(文本太短/多语混排)时偏向翻译 —— 逐行 prompt 会把已是目标语言的行输出「编号|-」兜底
+        let hypotheses = recognizer.languageHypotheses(withMaximum: 3)
+        let targetConfidence = hypotheses.first { languageMatches($0.key.rawValue, target) }?.value ?? 0
+        // 目标语言置信度足够高 → 判定歌词本身已是目标语言, 跳过翻译
+        return targetConfidence < 0.65
+    }
+
+    /// 按 BCP-47 主子标签比较语言代码: "zh" ~ "zh-Hans" ~ "zh-Hant", "en" ~ "en-US"
+    private func languageMatches(_ a: String, _ b: String) -> Bool {
+        func primary(_ code: String) -> String {
+            (code.split(separator: "-").first.map(String.init) ?? code).lowercased()
         }
-        let total = kana + han + hangul + latin
-        guard total >= 20 else { return false }
-        if defaults[.aiTranslationTargetLanguage].hasPrefix("zh") {
-            if kana >= 5 || hangul >= 5 { return true }
-            if Double(han) / Double(total) > 0.4 { return false }
-        }
-        return true
+        return primary(a) == primary(b)
     }
 
     // MARK: 翻译流程
@@ -465,19 +477,21 @@ class AITranslationService {
         isTranslating = true
         defer { isTranslating = false }
         var results: [Int: String] = [:]
+        var usedModel = ""
         let chunkSize = 100
         var start = 0
         while start < indices.count {
             let chunk = Array(indices[start ..< min(start + chunkSize, indices.count)])
-            guard let answer = requestTranslation(
+            guard let (answer, model) = requestTranslation(
                 of: chunk.map { lyrics.lines[$0].content },
                 title: title,
                 targetCode: targetCode
             ) else {
+                // requestTranslation 已按失败类型发过通知(key 无效 / 接口地址无效 / 网络请求失败), 此处直接放弃
                 log("AI translation request failed for \(title)")
-                notify("AI 翻译失败", "《\(title)》网络请求失败, 稍后可从菜单重试")
                 return
             }
+            usedModel = model
             parseAnswer(answer, chunk: chunk, lyrics: lyrics, into: &results)
             start += chunkSize
         }
@@ -488,21 +502,24 @@ class AITranslationService {
             return
         }
 
+        let modelName = shortModelName(usedModel)
         DispatchQueue.lyricsDisplay.async {
+            // H1 copy-then-publish: 不原地 mutate 共享 Lyrics(避免 data race), 构造新实例并重新发布,
+            // 让所有 $currentLyrics 订阅者(含 HUD 歌词窗口)重建并显示译文。
+            _ = lyrics.quality                          // 先固化 quality 缓存, 防译文 attachment 抬高择优分
+            var newLines = lyrics.lines                 // LyricsLine 是 struct, 值拷贝
             for (i, text) in results {
-                lyrics.lines[i].attachments[tag] = text
+                newLines[i].attachments[tag] = text
             }
-            lyrics.metadata.attachmentTags.insert(tag)
-            lyrics.metadata.needsPersist = true
-            lyrics.persist()
-            let appController = AppController.shared
-            if appController.currentLyrics === lyrics {
-                // 触发一次行刷新, 让当前行立即显示译文
-                appController.currentLineIndex = nil
-                appController.scheduleCurrentLineCheck()
+            let newLyrics = Lyrics(lines: newLines, idTags: lyrics.idTags, metadata: lyrics.metadata)
+            // 注: init 会从 newLines 重算 metadata.attachmentTags(已含译文 tag), 无需手动 insert
+            newLyrics.metadata.needsPersist = true
+            newLyrics.persist()
+            if AppController.shared.currentLyrics === lyrics {
+                AppController.shared.currentLyrics = newLyrics   // 重新发布 → 显示层重建带译文
             }
-            log("AI translation finished for \(title): \(results.count)/\(indices.count) lines")
-            self.notify("AI 翻译完成", "《\(title)》已翻译 \(results.count) 行, 歌词已实时更新")
+            log("AI translation finished for \(title): \(results.count)/\(indices.count) lines via \(modelName)")
+            self.notify("AI 翻译完成", "《\(title)》已用 \(modelName) 翻译 \(results.count) 行, 歌词已实时更新")
         }
     }
 
@@ -517,53 +534,85 @@ class AITranslationService {
         }
     }
 
+    private func shortModelName(_ model: String) -> String {
+        switch model {
+        case "anthropic/claude-opus-4.8": return "opus4.8"
+        case "anthropic/claude-sonnet-5": return "sonnet5"
+        case "deepseek/deepseek-chat-v3.1": return "deepseek"
+        default: return model.split(separator: "/").last.map(String.init) ?? model
+        }
+    }
+
     private func buildPrompt(of contents: [String], title: String, targetCode: String) -> String {
         let target = languageName(of: targetCode)
         let numbered = contents.enumerated().map { "\($0.offset + 1)|\($0.element)" }.joined(separator: "\n")
         return """
-        你是一位资深的歌词译者。将下面的歌词逐行翻译成\(target)。
+        你是一位专业的歌词译者,精通多语言文学翻译。你的任务是把用户提供的歌词翻译成\(target)。
 
-        要求:
-        - 只输出翻译结果, 每行格式为「编号|译文」, 编号与输入一一对应; 不合并、不拆分、不遗漏、不添加任何解释
-        - 先领会整首歌的叙事、情绪与意象, 再逐行落笔, 全篇保持语气与人称一致
-        - 传达意境而非字面对应: 译出歌词的画面感与言外之意, 用词凝练, 有中文歌词的韵律与诗意
-        - 俚语、双关与文化梗用贴切的中文意象转译, 宁可意译不可生硬直译
-        - 如果某行是纯人名/制作信息(词、曲、编曲、制作人等)、无实义拟声词(如 la la la)、或本身已是\(target), 该行输出「编号|-」
+        ## 语言规则
+        - 只翻译非\(target)歌词,统一译为\(target)。若某行本身已是\(target),按"无需翻译"处理。
 
-        歌曲: \(title)
+        ## 翻译原则(按优先级排序)
+        1. 意象优先于字面:保留隐喻、意象和画面感,而非逐字直译;直译会丢诗意处,用\(target)里效果对等的表达重构。
+        2. 逐行对应:与原文严格行级对齐,不合并、不拆分、不增删行。
+        3. 结构一致:重复段落(副歌、叠句)用完全相同的译文;原文的排比、头语反复(anaphora)在译文中保留。
+        4. 语域匹配:口语译口语,典雅译典雅,俚语找\(target)里同等鲜活的对应,不磨平成书面语。
+        5. 文化负载词:不可译概念(如 saudade、ojalá)就近选最贴近的\(target)表达意译;宗教/神话/地名/人名典故用通行译名,无则保留原文。
+        6. 忠于给定文本:只翻译用户提供的文本。即使你记忆中这首歌有不同版本歌词,也严格以输入为准,不补全、不纠正、不替换。
 
+        ## 输出格式(严格遵守)
+        逐行输出「编号|译文」:编号照抄输入、一一对应、不改顺序;译文单行、不含换行、不含方括号 [ ]、不含竖线 |;拟声词/ad-lib、纯制作信息行、本身已是\(target)的行输出「编号|-」;除这些行外不输出任何解释、前言、空行或代码块。
+
+        ## 输入
+        歌名:\(title)(仅供理解语境,不作翻译依据)
+        歌词:
         \(numbered)
         """
     }
 
-    private func requestTranslation(of contents: [String], title: String, targetCode: String) -> String? {
+    /// 遍历 [主模型 + 备选] 链: 硬失败换下一个; 401/403 立即中止提示 key 错; 成功返回译文 + 实际用的模型。
+    private func requestTranslation(of contents: [String], title: String, targetCode: String) -> (answer: String, model: String)? {
         var base = defaults[.aiTranslationBaseURL]
         while base.hasSuffix("/") { base.removeLast() }
-        guard let url = URL(string: base + "/chat/completions") else { return nil }
+        guard let url = URL(string: base + "/chat/completions") else {
+            notify("AI 翻译失败", "接口地址无效, 请检查 偏好设置 → 通用")
+            return nil
+        }
         let prompt = buildPrompt(of: contents, title: title, targetCode: targetCode)
-        let body: [String: Any] = [
-            "model": defaults[.aiTranslationModel],
-            "messages": [["role": "user", "content": prompt]],
-        ]
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer " + defaults[.aiTranslationAPIKey], forHTTPHeaderField: "Authorization")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        let key = defaults[.aiTranslationAPIKey]
 
-        for attempt in 1...2 {
-            if let answer = performRequest(request) {
-                return answer
-            }
-            if attempt == 1 {
-                Thread.sleep(forTimeInterval: 5)
+        let primary = defaults[.aiTranslationModel].isEmpty ? "anthropic/claude-opus-4.8" : defaults[.aiTranslationModel]
+        let chain = [primary] + fallbackModels.filter { $0 != primary }
+
+        for model in chain {
+            let body: [String: Any] = [
+                "model": model,
+                "temperature": 0,
+                "messages": [["role": "user", "content": prompt]],
+            ]
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer " + key, forHTTPHeaderField: "Authorization")
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+            switch performRequest(request) {
+            case .success(let answer):
+                return (answer, model)
+            case .authFailure:
+                notify("AI 翻译失败", "API Key 无效, 请检查 偏好设置 → 通用")
+                return nil
+            case .hardFailure:
+                log("AI translation hard failure on \(model) for \(title), trying next")
+                continue
             }
         }
+        notify("AI 翻译失败", "《\(title)》网络请求失败, 稍后可从菜单重试")
         return nil
     }
 
-    private func performRequest(_ request: URLRequest) -> String? {
-        var answer: String?
+    private func performRequest(_ request: URLRequest) -> RequestOutcome {
+        var outcome: RequestOutcome = .hardFailure   // 兜底: error / 无响应 / JSON 解析失败 / 超时 都落这
         let semaphore = DispatchSemaphore(value: 0)
         let task = session.dataTask(with: request) { data, response, error in
             defer { semaphore.signal() }
@@ -571,22 +620,31 @@ class AITranslationService {
                 log("AI translation network error: \(error.localizedDescription)")
                 return
             }
-            guard let data = data else { return }
-            guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-            if let status = (response as? HTTPURLResponse)?.statusCode, status != 200 {
-                log("AI translation HTTP \(status): \(String(data: data, encoding: .utf8)?.prefix(200) ?? "")")
+            guard let http = response as? HTTPURLResponse else { return }
+            // 先判状态码, 早于 JSON 解析: 401/403 无条件视为 key 无效(其 body 常是非 JSON 的 HTML)
+            if http.statusCode == 401 || http.statusCode == 403 {
+                outcome = .authFailure
                 return
             }
+            guard http.statusCode == 200, let data = data else {
+                let preview = data.flatMap { String(data: $0, encoding: .utf8) }?.prefix(200) ?? ""
+                log("AI translation HTTP \(http.statusCode): \(preview)")
+                return
+            }
+            guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
             let choices = object["choices"] as? [[String: Any]]
             let message = choices?.first?["message"] as? [String: Any]
-            answer = message?["content"] as? String
+            if let content = message?["content"] as? String,
+               !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                outcome = .success(content)
+            }
         }
         task.resume()
         if semaphore.wait(timeout: .now() + 130) == .timedOut {
             task.cancel()
             log("AI translation request timed out")
         }
-        return answer
+        return outcome
     }
 
     private func parseAnswer(_ answer: String, chunk: [Int], lyrics: Lyrics, into results: inout [Int: String]) {
