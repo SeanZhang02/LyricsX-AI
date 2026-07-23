@@ -408,7 +408,7 @@ class AITranslationService {
         return URLSession(configuration: config)
     }()
 
-    /// 菜单手动触发: 无视自动开关与"已尝试"标记, 每种跳过原因都给出通知反馈
+    /// 菜单手动触发: 无视自动开关/已尝试标记/已有翻译, 强制覆盖重译。
     func translateNow(_ lyrics: Lyrics?) {
         guard !defaults[.aiTranslationBaseURL].isEmpty,
               !defaults[.aiTranslationAPIKey].isEmpty,
@@ -417,10 +417,6 @@ class AITranslationService {
             return
         }
         guard let lyrics = lyrics else { return }
-        guard !lyrics.metadata.hasTranslation else {
-            notify("无需翻译", "这首歌已经有翻译了")
-            return
-        }
         queue.async {
             lyrics.metadata.data[.aiTranslationAttempted] = true
             guard self.isTranslatable(lyrics) else {
@@ -438,7 +434,7 @@ class AITranslationService {
               !defaults[.aiTranslationAPIKey].isEmpty,
               !defaults[.aiTranslationModel].isEmpty,
               let lyrics = lyrics,
-              !lyrics.metadata.hasTranslation else {
+              translationCoverage(lyrics) < 0.5 else {   // 部分翻译(<50%)也重译补全; 全译则跳过
             return
         }
         queue.async {
@@ -458,8 +454,7 @@ class AITranslationService {
         let contents = lyrics.lines.map(\.content).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         guard contents.count >= 4 else { return false }
 
-        let target = defaults[.aiTranslationTargetLanguage].isEmpty
-            ? "zh-Hans" : defaults[.aiTranslationTargetLanguage]
+        let target = targetLanguageCode
 
         let recognizer = NLLanguageRecognizer()
         recognizer.processString(contents.joined(separator: "\n"))
@@ -478,18 +473,28 @@ class AITranslationService {
         return primary(a) == primary(b)
     }
 
+    private var targetLanguageCode: String {
+        defaults[.aiTranslationTargetLanguage].isEmpty ? "zh-Hans" : defaults[.aiTranslationTargetLanguage]
+    }
+
+    /// 阈值 0.5 必须 ≤ persist 门控比例(results*2>=indices), 否则落盘成功的歌下次加载仍 <阈值、被反复重译。
+    private func translationCoverage(_ lyrics: Lyrics) -> Double {
+        let tag = LyricsLine.Attachments.Tag.translation(languageCode: targetLanguageCode)
+        let content = lyrics.lines.filter { !$0.content.trimmingCharacters(in: .whitespaces).isEmpty }
+        guard !content.isEmpty else { return 1 }
+        return Double(content.filter { $0.attachments[tag] != nil }.count) / Double(content.count)
+    }
+
     // MARK: 翻译流程
 
     private func translate(_ lyrics: Lyrics) {
-        let targetCode = defaults[.aiTranslationTargetLanguage].isEmpty ? "zh-Hans" : defaults[.aiTranslationTargetLanguage]
+        let targetCode = targetLanguageCode
         let tag = LyricsLine.Attachments.Tag.translation(languageCode: targetCode)
 
+        // 收集全部非空正文行(覆盖重译: 新译同 tag 直接盖旧值, 部分翻译得以补全)
         var indices: [Int] = []
-        for (i, line) in lyrics.lines.enumerated() {
-            let content = line.content.trimmingCharacters(in: .whitespaces)
-            if !content.isEmpty, line.attachments[tag] == nil {
-                indices.append(i)
-            }
+        for (i, line) in lyrics.lines.enumerated() where !line.content.trimmingCharacters(in: .whitespaces).isEmpty {
+            indices.append(i)
         }
         guard !indices.isEmpty else { return }
 
@@ -527,9 +532,12 @@ class AITranslationService {
             // H1 copy-then-publish: 不原地 mutate 共享 Lyrics(避免 data race), 构造新实例并重新发布,
             // 让所有 $currentLyrics 订阅者(含 HUD 歌词窗口)重建并显示译文。
             _ = lyrics.quality                          // 先固化 quality 缓存, 防译文 attachment 抬高择优分
-            var newLines = lyrics.lines                 // LyricsLine 是 struct, 值拷贝
-            for (i, text) in results {
-                newLines[i].attachments[tag] = text
+            var newLines = lyrics.lines
+            // 剥离非目标语的旧译 tag, 否则同行双 translation tag 会让显示层随机选到哪种语言
+            let staleTranslations = lyrics.metadata.attachmentTags.filter { $0.isTranslation && $0 != tag }
+            for i in newLines.indices {
+                staleTranslations.forEach { newLines[i].attachments[$0] = nil }
+                if let text = results[i] { newLines[i].attachments[tag] = text }
             }
             let newLyrics = Lyrics(lines: newLines, idTags: lyrics.idTags, metadata: lyrics.metadata)
             // 注: init 会从 newLines 重算 metadata.attachmentTags(已含译文 tag), 无需手动 insert
