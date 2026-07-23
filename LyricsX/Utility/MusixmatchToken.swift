@@ -1,10 +1,11 @@
 //
 //  MusixmatchToken.swift
-//  LyricsX — 自动获取 Musixmatch web-desktop usertoken
+//  LyricsX — auto-fetch a Musixmatch web-desktop usertoken
 //
-//  Musixmatch(全球最大歌词库, 也是 Spotify 背后的源)需要一个 usertoken 才可用。
-//  共享 trial token 会限流失效(401),用户手配很反人类。这里在启动/组装 provider 时
-//  自动从公开 token.get 端点拉一个并缓存,注入 LyricsKit 的 AuthenticationManagerStore。
+//  Musixmatch (the largest global lyrics source, also what Spotify serves) needs a usertoken.
+//  Shared trial tokens get rate-limited (401) and asking users to configure one is user-hostile,
+//  so we fetch one from the public token.get endpoint on launch and cache it, injecting it into
+//  LyricsKit's AuthenticationManagerStore.
 //
 
 import Foundation
@@ -12,7 +13,7 @@ import Foundation
 enum MusixmatchToken {
     private static let endpoint = URL(string: "https://apic-desktop.musixmatch.com/ws/1.1/token.get?app_id=web-desktop-app-v1.0&format=json")!
 
-    /// 拉一个 usertoken;失败 / 占位串 / captcha 时返回 nil(调用方保留旧缓存)。
+    /// Returns a usertoken; nil on failure / placeholder / captcha (caller keeps the previous cache).
     static func fetch() async -> String? {
         var request = URLRequest(url: endpoint, timeoutInterval: 10)
         request.setValue("x-mxm-token-guid=", forHTTPHeaderField: "Cookie")

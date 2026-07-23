@@ -68,7 +68,7 @@ class SearchLyricsViewController: NSViewController, NSTableViewDelegate, NSTable
 
         let track = selectedPlayer.currentTrack
         let duration = track?.duration ?? 0
-        // 清洗查询串(去 (Live)/[feat…] 版本噪声, 提升召回);与自动搜索同款清洗
+        // Clean the query (drop (Live)/[feat…] noise) to improve recall, same as auto-search
         let req = LyricsSearchRequest(
             searchTerm: .info(title: cleanSearchTitle(searchTitle), artist: cleanSearchArtist(searchArtist)),
             duration: duration, limit: 8

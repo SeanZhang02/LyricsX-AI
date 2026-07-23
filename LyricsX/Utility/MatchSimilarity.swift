@@ -1,18 +1,18 @@
 //
 //  MatchSimilarity.swift
-//  LyricsX — 搜索质量:查询清洗 / 折叠相似度 / app 侧择优分 / 匹配门
+//  LyricsX — search quality: query cleaning / folded similarity / app-side ranking score / match floor
 //
-//  说明:LyricsKit 1.8.3 的 quality 公式 `1 - pow((1.05-a)(1.05-t)(1.05-d), 1/3)`
-//  在 title/artist 恰好精确匹配(factor 1.5/1.3 > 1)时括号内为负 → pow 得 NaN,
-//  使 `new.quality > existing.quality` 恒 false(错歌粘住)。这里用 app 侧加权分绕开。
-//  相似度实现对照 1.8.3 `Lyrics+Quality.swift` 的 similarity(s1:s2:),额外做
-//  大小写/变音符号/全半角折叠,使 "Ojalá"~"Ojala" 等价、跨字符集(日/西)恒 ≈0。
+//  LyricsKit 1.8.3's quality formula `1 - pow((1.05-a)(1.05-t)(1.05-d), 1/3)` yields NaN when title
+//  or artist matches exactly (factor 1.5/1.3 > 1 makes the base negative), which makes
+//  `new.quality > existing.quality` always false (a wrong pick sticks). We rank with an app-side
+//  weighted score instead. Similarity mirrors 1.8.3 `Lyrics+Quality.swift` similarity(s1:s2:), plus
+//  case/diacritic/width folding so "Ojalá" ~ "Ojala" and cross-script (JA vs ES) stays ~0.
 //
 
 import Foundation
 import LyricsXFoundation
 
-// MARK: - 折叠相似度
+// MARK: - Folded similarity
 
 private func foldedChars(_ s: String) -> [Character] {
     Array(s.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil))
@@ -41,8 +41,8 @@ private func editDistance(_ lhs: [Character], _ rhs: [Character], insertionCost:
     return d.last!
 }
 
-/// 与 LyricsKit 1.8.3 similarity(s1:s2:) 等价(min-length 归一, 天然含子串容忍),先折叠。
-/// "Despacito (feat. …)" vs "Despacito" ≈ 1.0;日语标题 vs 西语查询 ≈ 0。
+/// Mirrors LyricsKit 1.8.3 similarity(s1:s2:) (min-length normalized, tolerates containment), folded first.
+/// "Despacito (feat. …)" vs "Despacito" ≈ 1.0; a Japanese title vs a Spanish query ≈ 0.
 func matchSimilarity(_ s1: String, _ s2: String) -> Double {
     let a = foldedChars(s1), b = foldedChars(s2)
     let len = min(a.count, b.count)
@@ -51,7 +51,7 @@ func matchSimilarity(_ s1: String, _ s2: String) -> Double {
     return Double(len - diff) / Double(len)
 }
 
-// MARK: - 查询清洗(白名单去版本/feat 噪声, 提升召回)
+// MARK: - Query cleaning (whitelist-drop version/feat noise to improve recall)
 
 private let versionNoiseTokens: Set<String> = [
     "feat", "ft", "featuring", "with", "prod", "remaster", "remastered", "deluxe",
@@ -68,7 +68,7 @@ private func containsVersionNoise<S: StringProtocol>(_ inner: S) -> Bool {
     return tokens.contains { versionNoiseTokens.contains($0) }
 }
 
-/// 删除内容命中噪声词的括号组(() [] （） 【】), 循环到稳定(处理连续/删后新露出的组)。
+/// Drop bracket groups whose content contains a noise token, looping until stable (handles adjacent/revealed groups).
 private func removeNoiseBrackets(_ input: String) -> String {
     guard let re = try? NSRegularExpression(pattern: "[\\(\\[（【][^\\(\\[（【\\)\\]）】]*[\\)\\]）】]") else { return input }
     var s = input
@@ -85,8 +85,7 @@ private func removeNoiseBrackets(_ input: String) -> String {
     return s
 }
 
-/// 去掉噪声括号组与尾部 " - Xxx" 版本后缀;结果为空回退原串。
-/// 只删含噪声词的括号,保留 "(I Can't Get No) Satisfaction" 这类歌名自带括号。
+/// Only drops brackets containing a noise token, so a title's own parenthetical (e.g. "(I Can't Get No) Satisfaction") is kept.
 func cleanSearchTitle(_ title: String) -> String {
     var s = removeNoiseBrackets(title)
     if let dash = s.range(of: " - ", options: .backwards), containsVersionNoise(s[dash.upperBound...]) {
@@ -97,8 +96,7 @@ func cleanSearchTitle(_ title: String) -> String {
     return s.isEmpty ? title : s
 }
 
-/// 先去掉 "(feat. X)" 噪声括号, 再只在 feat 标记与 CJK 顿号处截断艺人。
-/// ⚠️ 绝不按 &/,// 截(会切碎 Simon & Garfunkel、AC/DC)。
+/// Truncate the artist only at a feat marker or a CJK enumeration comma — never at &/,/ (would split band names like Simon & Garfunkel, AC/DC).
 func cleanSearchArtist(_ artist: String) -> String {
     var s = removeNoiseBrackets(artist)
     var cut = s.endIndex
@@ -113,7 +111,7 @@ func cleanSearchArtist(_ artist: String) -> String {
     return out.isEmpty ? artist : out
 }
 
-// MARK: - app 侧择优分(NaN-free, 替换 1.8.3 quality)
+// MARK: - App-side ranking score (NaN-free replacement for 1.8.3 quality)
 
 private func durationScore(_ lyrics: Lyrics) -> Double {
     guard let len = lyrics.length, let searchDuration = lyrics.metadata.request?.duration, searchDuration > 0 else {
@@ -125,9 +123,10 @@ private func durationScore(_ lyrics: Lyrics) -> Double {
 }
 
 private func albumBonus(_ lyrics: Lyrics, trackAlbum: String?) -> Double {
+    // Either side's album unknown → neither reward nor penalty (QQ/Kugou don't set album).
     guard let trackAlbum, !trackAlbum.isEmpty,
           let candAlbum = lyrics.idTags[.album], !candAlbum.isEmpty else {
-        return 0 // 任一方专辑未知 → 不奖不罚(QQ/Kugou 不设 album)
+        return 0
     }
     let a = foldedString(candAlbum), b = foldedString(trackAlbum)
     if a.contains(b) || b.contains(a) || matchSimilarity(candAlbum, trackAlbum) >= 0.8 {
@@ -136,8 +135,8 @@ private func albumBonus(_ lyrics: Lyrics, trackAlbum: String?) -> Double {
     return 0
 }
 
-/// 加权相似度(artist .45 / title .40 / duration .15 + 翻译/时轴 bonus 各 .05)+ 专辑 bonus。
-/// 不用 LyricsKit 1.8.3 的 quality(有 NaN bug),从根上消除"精确匹配却换不掉现任"。
+/// Weighted similarity (artist .45 / title .40 / duration .15 + translation/timetag bonus .05 each) + album bonus.
+/// Avoids 1.8.3 quality's NaN bug so an exact match can actually replace the incumbent.
 func appMatchScore(_ lyrics: Lyrics, trackAlbum: String?) -> Double {
     let titleSim: Double
     let artistSim: Double
@@ -156,7 +155,7 @@ func appMatchScore(_ lyrics: Lyrics, trackAlbum: String?) -> Double {
     return score
 }
 
-// MARK: - 匹配门 C(+ D 兜底 + 时长豁免)
+// MARK: - Match floor C (+ D backstop + duration exemption)
 
 private func hasCJK(_ s: String) -> Bool {
     s.unicodeScalars.contains { (0x3040...0x9FFF).contains($0.value) || (0xAC00...0xD7AF).contains($0.value) }
@@ -172,10 +171,11 @@ private func lyricsBodyIsMostlyCJK(_ lyrics: Lyrics) -> Bool {
     return cjk >= 5 && cjk > latin
 }
 
-/// 拒绝与查询"完全不相干"的候选(治西语→日语粗错)。true=通过。独立于 strictSearchEnabled。
-/// C:双 tag 都在时 titleSim<0.3 且 artistSim<0.3 才拒(sim 取原始 track 值与清洗 query 值的较大者);
-/// 单侧 tag 缺 → 该侧不判(fail-open);双缺 → D 兜底(查询纯拉丁 && 歌词正文 CJK 则拒)。
-/// 时长豁免:候选时长与曲目时长差 <3s 一律放行(救罗马字 tag/CJK 歌词的正确歌)。
+/// Reject candidates completely unrelated to the query (fixes e.g. a Spanish song matching a Japanese one). true = pass.
+/// Independent of strictSearchEnabled. C: with both tags present, reject only when titleSim < 0.3 AND artistSim < 0.3
+/// (sim takes the max of raw track value and cleaned query value); a missing tag skips that side (fail-open); both
+/// missing → D backstop (query is Latin-only AND lyrics body is CJK → reject). Duration exemption: candidate length
+/// within 3s of the track passes unconditionally (saves the correct song when its tags are romanized but lyrics are CJK).
 func passesMatchFloor(_ lyrics: Lyrics, request: LyricsSearchRequest, rawTitle: String, rawArtist: String, trackDuration: TimeInterval?) -> Bool {
     if let len = lyrics.length, let dur = trackDuration, dur > 0, abs(len - dur) < 3 {
         return true
@@ -193,11 +193,11 @@ func passesMatchFloor(_ lyrics: Lyrics, request: LyricsSearchRequest, rawTitle: 
         let artistSim = max(matchSimilarity(ca, rawArtist), matchSimilarity(ca, queryArtist))
         return !(titleSim < 0.3 && artistSim < 0.3)
     }
-    // 双 tag 都缺(1.8.3 现网不可达, 留作未来 provider 保险)
+    // Both tags missing (unreachable on 1.8.3 providers, kept as a backstop for future providers)
     if candTitle == nil, candArtist == nil {
         if !hasCJK(rawTitle + rawArtist + queryTitle + queryArtist), lyricsBodyIsMostlyCJK(lyrics) {
             return false
         }
     }
-    return true // 单侧缺失或 D 不触发 → 放行
+    return true
 }

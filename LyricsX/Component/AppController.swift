@@ -72,8 +72,8 @@ class AppController: NSObject {
 
     @MainActor
     func updateLyricsManager() async throws {
-        // Musixmatch(已含在 noAuthenticationRequiredServices)每次请求从 AuthenticationManagerStore 读 token。
-        // 手填优先, 否则用自动拉取并缓存的 token; 先注入本地缓存(快)压首曲竞态, 再后台刷新。
+        // Musixmatch (already in noAuthenticationRequiredServices) reads its token from AuthenticationManagerStore per request.
+        // Manual token wins; otherwise use the auto-fetched cached token. Inject the cache first (fast, avoids a first-song race), then refresh in the background.
         let manual = defaults[.musixmatchToken]
         let cached = (manual?.isEmpty == false) ? manual : defaults[.musixmatchAutoToken]
         if let token = cached, !token.isEmpty {
@@ -83,18 +83,18 @@ class AppController: NSObject {
         let services = LyricsProviders.Service.noAuthenticationRequiredServices
         lyricsManager = LyricsProviders.Group(providers: services.map { $0.create() })
 
-        // 手填为空时后台刷新自动 token(共享 trial token 会限流失效, 每次启动重拉一次)
+        // With no manual token, refresh the auto token in the background (the shared trial token gets rate-limited; re-fetch once per launch).
         if manual?.isEmpty != false {
             refreshMusixmatchAutoToken()
         }
     }
 
-    /// 后台从 token.get 拉一个 Musixmatch usertoken, 成功则覆盖缓存并注入 store; 失败保留旧缓存。
+    /// Fetch a Musixmatch usertoken from token.get in the background; on success overwrite the cache and inject the store, on failure keep the old cache.
     private func refreshMusixmatchAutoToken() {
         Task {
             guard let token = await MusixmatchToken.fetch() else { return }
             defaults[.musixmatchAutoToken] = token
-            // 拉取期间用户可能刚在 Lab 粘了手填 token, 手填优先, 别覆盖
+            // The user may have pasted a manual token in Lab while fetching; the manual token wins, don't overwrite.
             guard defaults[.musixmatchToken]?.isEmpty != false else { return }
             await AuthenticationManagerStore.shared.setMusixmatchToken(token)
         }
@@ -254,7 +254,7 @@ class AppController: NSObject {
         }
 
         let duration = track.duration ?? 0
-        // 清洗查询串(去 (Live)/[feat…] 等版本噪声, 提升召回); 原始 title/artist 不变(缓存文件名 + 匹配门要用)
+        // Clean the query (drop (Live)/[feat…] version noise) to improve recall; keep the raw title/artist (used for the cache file name and the match floor).
         let request = LyricsSearchRequest(
             searchTerm: .info(title: cleanSearchTitle(title), artist: cleanSearchArtist(artist)),
             duration: duration, limit: 5
@@ -290,7 +290,7 @@ class AppController: NSObject {
                 }
 
                 if defaults[.writeToiTunesAutomatically] {
-                    // 不覆盖已有 Apple 歌词, 保住 Apple Music 的逐词同步(仅当曲目无歌词时写)
+                    // Don't overwrite existing Apple lyrics — preserves Apple Music's word-by-word sync (only write when the track has none).
                     writeToiTunes(overwrite: false)
                 }
                 AITranslationService.shared.translateIfNeeded(currentLyrics)
@@ -313,7 +313,7 @@ class AppController: NSObject {
         if defaults[.strictSearchEnabled], !lyrics.isMatched() {
             return
         }
-        // 匹配门:拒绝与查询完全不相干的候选(治西语→日语粗错), 放在落盘/写 iTunes/发布之前
+        // Match floor: reject candidates unrelated to the query (fixes e.g. Spanish -> Japanese), before persist / iTunes write / publish.
         guard passesMatchFloor(lyrics, request: req, rawTitle: track.title ?? "", rawArtist: track.artist ?? "", trackDuration: track.duration) else {
             return
         }
@@ -369,27 +369,27 @@ private extension Lyrics.Metadata.Key {
     static var aiTranslationAttempted = Lyrics.Metadata.Key("aiTranslationAttempted")
 }
 
-/// 歌词 AI 翻译中间件: 歌词加载后若无目标语言翻译, 调用 OpenAI 兼容接口逐行翻译,
-/// 以 [tr:lang] 附件形式写入歌词行并持久化到本地 lrcx 文件。
+/// AI lyrics translation service: once lyrics load without a target-language translation, translate line by line via an OpenAI-compatible API,
+/// writing each line as a [tr:lang] attachment and persisting to the local lrcx file.
 class AITranslationService {
 
     static let shared = AITranslationService()
 
-    /// 是否有翻译任务进行中 (菜单栏据此显示"翻译中…")
+    /// Whether a translation task is running (the menu bar shows "translating..." based on this).
     private(set) var isTranslating = false
 
     private let queue = DispatchQueue(label: "com.JH.LyricsX.aiTranslation", qos: .utility)
 
-    /// 主模型硬失败时依次尝试的备选(同一 OpenRouter key 只换 model 字段)
+    /// Fallbacks tried in order when the primary model hard-fails (same OpenRouter key, only the model field changes).
     private let fallbackModels = ["anthropic/claude-sonnet-5", "deepseek/deepseek-chat-v3.1"]
 
     private enum RequestOutcome {
-        case success(String)   // 仅 "HTTP 200 且 content 非空"
+        case success(String)   // only "HTTP 200 with non-empty content"
         case authFailure       // HTTP 401 / 403
-        case hardFailure       // 网络错误 / 超时 / 其它非 200 / 空 content / JSON 解析失败
+        case hardFailure       // network error / timeout / other non-200 / empty content / JSON parse failure
     }
 
-    /// 发送系统通知
+    /// Post a system notification.
     private func notify(_ title: String, _ body: String) {
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert]) { granted, _ in
@@ -408,7 +408,7 @@ class AITranslationService {
         return URLSession(configuration: config)
     }()
 
-    /// 菜单手动触发: 无视自动开关/已尝试标记/已有翻译, 强制覆盖重译。
+    /// Manual menu trigger: ignores the auto toggle / attempted flag / existing translation and force re-translates (overwrite).
     func translateNow(_ lyrics: Lyrics?) {
         guard !defaults[.aiTranslationBaseURL].isEmpty,
               !defaults[.aiTranslationAPIKey].isEmpty,
@@ -434,7 +434,7 @@ class AITranslationService {
               !defaults[.aiTranslationAPIKey].isEmpty,
               !defaults[.aiTranslationModel].isEmpty,
               let lyrics = lyrics,
-              translationCoverage(lyrics) < 0.5 else {   // 部分翻译(<50%)也重译补全; 全译则跳过
+              translationCoverage(lyrics) < 0.5 else {   // re-translate partial (<50%) to complete it; skip if fully translated
             return
         }
         queue.async {
@@ -446,10 +446,10 @@ class AITranslationService {
         }
     }
 
-    // MARK: 语言判定
+    // MARK: Language detection
 
-    /// 用系统 NaturalLanguage 框架离线识别源语言(无网络、无第三方依赖):
-    /// 歌词本身已是目标语言(如中文歌 → 中译中)或太短(纯音乐)时跳过, 不调用 LLM。
+    /// Detect the source language offline with the system NaturalLanguage framework (no network, no third-party deps):
+    /// skip (no LLM call) when the lyrics are already the target language (e.g. a Chinese song) or too short (instrumental).
     private func isTranslatable(_ lyrics: Lyrics) -> Bool {
         let contents = lyrics.lines.map(\.content).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         guard contents.count >= 4 else { return false }
@@ -458,14 +458,14 @@ class AITranslationService {
 
         let recognizer = NLLanguageRecognizer()
         recognizer.processString(contents.joined(separator: "\n"))
-        // 识别不出(文本太短/多语混排)时偏向翻译 —— 逐行 prompt 会把已是目标语言的行输出「编号|-」兜底
+        // When undetectable (too short / mixed languages), lean toward translating — the per-line prompt outputs "n|-" for lines already in the target language.
         let hypotheses = recognizer.languageHypotheses(withMaximum: 3)
         let targetConfidence = hypotheses.first { languageMatches($0.key.rawValue, target) }?.value ?? 0
-        // 目标语言置信度足够高 → 判定歌词本身已是目标语言, 跳过翻译
+        // High enough target-language confidence -> treat the lyrics as already in the target language and skip.
         return targetConfidence < 0.65
     }
 
-    /// 按 BCP-47 主子标签比较语言代码: "zh" ~ "zh-Hans" ~ "zh-Hant", "en" ~ "en-US"
+    /// Compare language codes by BCP-47 primary subtag: "zh" ~ "zh-Hans" ~ "zh-Hant", "en" ~ "en-US".
     private func languageMatches(_ a: String, _ b: String) -> Bool {
         func primary(_ code: String) -> String {
             (code.split(separator: "-").first.map(String.init) ?? code).lowercased()
@@ -477,7 +477,7 @@ class AITranslationService {
         defaults[.aiTranslationTargetLanguage].isEmpty ? "zh-Hans" : defaults[.aiTranslationTargetLanguage]
     }
 
-    /// 阈值 0.5 必须 ≤ persist 门控比例(results*2>=indices), 否则落盘成功的歌下次加载仍 <阈值、被反复重译。
+    /// The 0.5 threshold must be <= the persist gate ratio (results*2>=indices), or a successfully-persisted song stays below it on the next load and is re-translated every time.
     private func translationCoverage(_ lyrics: Lyrics) -> Double {
         let tag = LyricsLine.Attachments.Tag.translation(languageCode: targetLanguageCode)
         let content = lyrics.lines.filter { !$0.content.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -485,13 +485,13 @@ class AITranslationService {
         return Double(content.filter { $0.attachments[tag] != nil }.count) / Double(content.count)
     }
 
-    // MARK: 翻译流程
+    // MARK: Translation flow
 
     private func translate(_ lyrics: Lyrics) {
         let targetCode = targetLanguageCode
         let tag = LyricsLine.Attachments.Tag.translation(languageCode: targetCode)
 
-        // 收集全部非空正文行(覆盖重译: 新译同 tag 直接盖旧值, 部分翻译得以补全)
+        // Collect every non-empty content line (overwrite re-translation: new text overwrites the same tag, so partial translations get completed).
         var indices: [Int] = []
         for (i, line) in lyrics.lines.enumerated() where !line.content.trimmingCharacters(in: .whitespaces).isEmpty {
             indices.append(i)
@@ -512,7 +512,7 @@ class AITranslationService {
                 title: title,
                 targetCode: targetCode
             ) else {
-                // requestTranslation 已按失败类型发过通知(key 无效 / 接口地址无效 / 网络请求失败), 此处直接放弃
+                // requestTranslation already notified by failure type (invalid key / invalid base URL / network failure); just give up here.
                 log("AI translation request failed for \(title)")
                 return
             }
@@ -520,7 +520,7 @@ class AITranslationService {
             parseAnswer(answer, chunk: chunk, lyrics: lyrics, into: &results)
             start += chunkSize
         }
-        // 覆盖率过低视为失败, 防止错位的结果污染歌词文件
+        // Too-low coverage counts as failure, to keep misaligned results from polluting the lyrics file.
         guard results.count * 2 >= indices.count else {
             log("AI translation coverage too low for \(title): \(results.count)/\(indices.count)")
             notify("AI 翻译失败", "《\(title)》译文校验未通过, 已放弃本次结果")
@@ -529,22 +529,22 @@ class AITranslationService {
 
         let modelName = shortModelName(usedModel)
         DispatchQueue.lyricsDisplay.async {
-            // H1 copy-then-publish: 不原地 mutate 共享 Lyrics(避免 data race), 构造新实例并重新发布,
-            // 让所有 $currentLyrics 订阅者(含 HUD 歌词窗口)重建并显示译文。
-            _ = lyrics.quality                          // 先固化 quality 缓存, 防译文 attachment 抬高择优分
+            // H1 copy-then-publish: don't mutate the shared Lyrics in place (avoids a data race); build a new instance and republish
+            // so every $currentLyrics subscriber (incl. the HUD window) rebuilds and shows the translation.
+            _ = lyrics.quality                          // freeze the quality cache first so the translation attachment can't inflate the ranking score
             var newLines = lyrics.lines
-            // 剥离非目标语的旧译 tag, 否则同行双 translation tag 会让显示层随机选到哪种语言
+            // Strip stale non-target translation tags, otherwise two translation tags on a line make the display layer pick a language at random.
             let staleTranslations = lyrics.metadata.attachmentTags.filter { $0.isTranslation && $0 != tag }
             for i in newLines.indices {
                 staleTranslations.forEach { newLines[i].attachments[$0] = nil }
                 if let text = results[i] { newLines[i].attachments[tag] = text }
             }
             let newLyrics = Lyrics(lines: newLines, idTags: lyrics.idTags, metadata: lyrics.metadata)
-            // 注: init 会从 newLines 重算 metadata.attachmentTags(已含译文 tag), 无需手动 insert
+            // Note: init recomputes metadata.attachmentTags from newLines (already includes the translation tag), no manual insert needed.
             newLyrics.metadata.needsPersist = true
             newLyrics.persist()
             if AppController.shared.currentLyrics === lyrics {
-                AppController.shared.currentLyrics = newLyrics   // 重新发布 → 显示层重建带译文
+                AppController.shared.currentLyrics = newLyrics   // republish -> display layer rebuilds with the translation
             }
             log("AI translation finished for \(title): \(results.count)/\(indices.count) lines via \(modelName)")
             self.notify("AI 翻译完成", "《\(title)》已用 \(modelName) 翻译 \(results.count) 行, 歌词已实时更新")
@@ -604,7 +604,7 @@ class AITranslationService {
         """
     }
 
-    /// 遍历 [主模型 + 备选] 链: 硬失败换下一个; 401/403 立即中止提示 key 错; 成功返回译文 + 实际用的模型。
+    /// Walk the [primary + fallbacks] chain: hard failure tries the next; 401/403 aborts immediately with a key error; success returns the translation and the model used.
     private func requestTranslation(of contents: [String], title: String, targetCode: String) -> (answer: String, model: String)? {
         var base = defaults[.aiTranslationBaseURL]
         while base.hasSuffix("/") { base.removeLast() }
@@ -646,7 +646,7 @@ class AITranslationService {
     }
 
     private func performRequest(_ request: URLRequest) -> RequestOutcome {
-        var outcome: RequestOutcome = .hardFailure   // 兜底: error / 无响应 / JSON 解析失败 / 超时 都落这
+        var outcome: RequestOutcome = .hardFailure   // fallback: error / no response / JSON parse failure / timeout all land here
         let semaphore = DispatchSemaphore(value: 0)
         let task = session.dataTask(with: request) { data, response, error in
             defer { semaphore.signal() }
@@ -655,7 +655,7 @@ class AITranslationService {
                 return
             }
             guard let http = response as? HTTPURLResponse else { return }
-            // 先判状态码, 早于 JSON 解析: 401/403 无条件视为 key 无效(其 body 常是非 JSON 的 HTML)
+            // Check the status code before parsing JSON: 401/403 is unconditionally an invalid key (its body is often non-JSON HTML).
             if http.statusCode == 401 || http.statusCode == 403 {
                 outcome = .authFailure
                 return

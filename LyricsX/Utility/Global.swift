@@ -199,7 +199,7 @@ func lyricsHasHigherPriority(_ new: Lyrics, over existing: Lyrics, trackAlbum: S
         }
     }
 
-    // 用 app 侧择优分(NaN-free, 含专辑软信号)替代 LyricsKit 1.8.3 有 NaN bug 的 quality
+    // App-side score (NaN-free, includes the album soft signal) instead of 1.8.3 quality, which has a NaN bug
     return appMatchScore(new, trackAlbum: trackAlbum) > appMatchScore(existing, trackAlbum: trackAlbum)
 }
 

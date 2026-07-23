@@ -11,7 +11,7 @@ class PreferenceSourceViewController: PreferenceViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        // 只列真正启用的源(noAuthenticationRequiredServices);Spotify 需登录鉴权、未接入, 不显示死条目
+        // Only list actually-enabled sources; Spotify needs login auth and isn't wired up, so don't show a dead entry
         availableSources = LyricsProviders.Service.noAuthenticationRequiredServices.map(\.displayName)
 
         enableSourcePriorityButton.state = defaults[.lyricsSourcePriorityEnabled] ? .on : .off
