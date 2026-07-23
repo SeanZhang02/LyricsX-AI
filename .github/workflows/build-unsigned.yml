@@ -1,0 +1,70 @@
+name: Build (Unsigned)
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches:
+      - '**'
+    paths-ignore:
+      - '**.md'
+      - 'ReleaseNotes/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build-unsigned:
+    runs-on: macos-26
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.4.app/Contents/Developer
+      LYRICSX_SKIP_BUILD_BUMP: "1"
+      LYRICSX_USE_LOCAL_DEPENDENCY: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build (unsigned Debug)
+        run: |
+          set -euo pipefail
+          rm -rf build/DerivedData
+          mkdir -p build
+          xcodebuild \
+            -project LyricsX.xcodeproj \
+            -scheme LyricsX \
+            -configuration Debug \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath build/DerivedData \
+            -skipMacroValidation \
+            -skipPackagePluginValidation \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            build
+
+      - name: Locate built .app
+        id: locate
+        run: |
+          set -euo pipefail
+          APP_PATH="build/DerivedData/Build/Products/Debug/LyricsX.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "Build did not produce $APP_PATH" >&2
+            find build/DerivedData/Build/Products -maxdepth 2 >&2 || true
+            exit 1
+          fi
+          echo "app_path=$APP_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Zip app (preserve .app bundle structure)
+        run: |
+          set -euo pipefail
+          mkdir -p build/artifact
+          ditto -c -k --keepParent "${{ steps.locate.outputs.app_path }}" \
+            "build/artifact/LyricsX-unsigned-${{ github.sha }}.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LyricsX-unsigned-${{ github.sha }}
+          path: build/artifact/LyricsX-unsigned-${{ github.sha }}.zip
+          if-no-files-found: error
+          retention-days: 14

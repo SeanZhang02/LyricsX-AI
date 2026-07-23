@@ -15,7 +15,7 @@
 
 ## H3 🟠 无内容级校验(覆盖率看不见的失败模式)
 
-- **证据**: `parseAnswer` (`:592-608`) 只做行号匹配 + 精确回显剔除。挡不住: 意译式回显、模型拒译文本("抱歉,我不能…")当译文收下、整体漂移(行号完整但内容整体错一行)。
+- **证据**: `parseAnswer` (`:592-607`) 只做行号匹配 + 精确回显剔除。挡不住: 意译式回显、模型拒译文本("抱歉,我不能…")当译文收下、整体漂移(行号完整但内容整体错一行)。
 - **修法**: 目标 zh 时非 ad-lib 行 CJK 占比 <30% → 不计入覆盖率不写 attachment;拒绝语 pattern(抱歉|无法|不能翻译|sorry|can't)→ 剔除,全文命中 → 按失败处理;首/中/尾 3 行锚点抽检长度比,异常 → 整包拒收。
 
 ## H4 🟠 无 sanitize,译文可破坏 LRCX 结构
@@ -35,12 +35,12 @@
 
 ## H7 🟡 手动搜索面板选歌词无翻译 hook(路径遗漏)
 
-- **证据**: `Search/SearchLyricsViewController.swift:78` → `lyricsReceived`(`AppController.swift:289`)→ `:306` 赋值,4 个自动触发点不覆盖此路径。用户专门手动挑的歌词反而不翻译。
-- **修法**: 在 `lyricsReceived` 内(或面板调用侧)补 `translateIfNeeded`。注意 `lyricsReceived` 也被自动搜索逐候选调用(`:257`,`:267`),直接在 `:306` 后挂会在搜索中途对中间候选开翻——需和 `:278` 的完成 hook 去重(建议: 面板调用侧挂,或 hook 内判断搜索是否进行中)。
+- **证据**: `Search/SearchLyricsViewController.swift:89-110` `useLyricsAction`(表格双击 + Use 按钮触发,`Main.storyboard:811` doubleAction / `:913` 按钮各绑一次)→ `:106` `AppController.shared.currentLyrics = lrc` 赋值,未调用 `translateIfNeeded`,4 个自动触发点均不覆盖此路径。用户专门手动挑的歌词反而不翻译。(注意: 该文件 `:114-129` 有一个自己的 `lyricsReceived` 方法,与 `AppController.lyricsReceived` 同名但完全独立,只往搜索结果表格塞数据,别混淆。)
+- **修法**: 在 `useLyricsAction` 的 `:106` 赋值后直接补一行 `AITranslationService.shared.translateIfNeeded(lrc)`。用户点一次调一次,无重复触发问题,不需要去重逻辑。
 
 ## H8 ⚪ isTranslating 跨线程读写无保护
 
-- **证据**: `:357` 私有 queue 写,状态栏菜单在 main 读(`AppDelegate` 菜单校验)。
+- **证据**: `:465-466`(`isTranslating = true` / `defer { isTranslating = false }`,在 `translate(_:)` 内、私有 utility queue 上)写;`AppDelegate.swift:151`/`:164` 在 main 读(NSMenuDelegate 回调)。`:357` 是属性声明。
 - **修法**: 挪到 main 写(翻译开始/结束时 `DispatchQueue.main.async`)或用锁/atomic。顺手即可,不单独开 PR。
 
 ## 建议 PR 切分

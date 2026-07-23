@@ -17,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **红线 (重构/改动不可破坏的契约)**:
 1. 译文只能以 `.translation(languageCode:)` attachment 进入 `Lyrics` — 渲染层与 LRCX 缓存的公共契约
 2. 不阻塞播放: 网络调用严禁在 main thread 或 `DispatchQueue.lyricsDisplay` 上同步等待
-3. 回填前必须守卫 track 同一性 (现: `currentLyrics === lyrics`), 防换曲后串曲
+3. 串曲守卫: 现实现中回填 (mutate+persist) 无条件执行 (天然安全: 只作用于本次翻译闭包捕获的 lyrics 对象及其自身文件), `currentLyrics === lyrics` 判断 (`AppController.swift:499`) 只守卫其后的 UI 刷新触发。重构时保持等价或更强的同一性守卫 (H1 copy-then-publish 方案会把守卫提到发布之前)
 4. `persist()` 前必须过覆盖率门控 — LRCX 缓存是永久的, 残缺/错位结果不能落盘
 5. 保持 5 个 `AITranslation*` UserDefaults key 名不变; 尽量少动 storyboard; 定期同步上游 (`upstream` = MxIris-LyricsX-Project/LyricsX, 活跃维护中)
 

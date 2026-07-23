@@ -22,16 +22,17 @@
 | `requestTranslation` | `:539` | POST `{base}/chat/completions`,Bearer key,重试 1 次(5s 退避)。⚠️ 未设 temperature/max_tokens |
 | `performRequest` | `:565` | 同步 semaphore 包 URLSession(跑在私有 utility queue,不碰 main),130s 硬超时 |
 | `parseAnswer` | `:592` | 逐行 `编号|译文` 解析(兼容全角 `｜`),译文==原文跳过(防回显),`-` 跳过 |
-| 回填+刷新 | `:491-503` | `DispatchQueue.lyricsDisplay.async` 内**原地 mutate** `lyrics.lines[i].attachments`,`currentLyrics === lyrics` 守卫防串曲,persist 在 `:497`,刷新靠 `currentLineIndex = nil + scheduleCurrentLineCheck()` |
+| 回填+刷新 | `:491-503` | `DispatchQueue.lyricsDisplay.async` 内**原地 mutate** `lyrics.lines[i].attachments`(`:492-494`)+ persist(`:497`)**无条件执行**(作用于本次翻译闭包捕获的 lyrics 对象及其自身文件,换曲后落盘到旧歌文件本身无害);`currentLyrics === lyrics` 判断在 `:499`,**只守卫其后的 UI 刷新触发**(`:500-501` `currentLineIndex = nil + scheduleCurrentLineCheck()`),防止切歌后错误刷新显示 |
 
 ### 自动触发点(4 处 + 1 处遗漏)
 
 | 路径 | Hook 位置 |
 |---|---|
-| 本地/内嵌歌词加载 (两条分支) | `AppController.swift:189`, `:230` |
+| 内嵌歌词 (`track.lyrics`, 播放器/文件自带) | `AppController.swift:189` (`:178-190` embedded 分支内) |
+| 本地 `.lrcx`/`.lrc` 侧车/缓存文件 | `:230` (`:210-236` `candidateLyricsURL` 循环内) |
 | 自动搜索完成(择优胜者) | `:278` |
 | 手动导入 `importLyrics` | `:334` |
-| ⚠️ **手动搜索面板选用歌词 — 无 hook (遗漏)** | `Search/SearchLyricsViewController.swift:78` → `lyricsReceived` → `:306` 赋值,没挂翻译。见 HARDENING_TODO.md H7 |
+| ⚠️ **手动搜索面板选用歌词 — 无 hook (遗漏)** | `Search/SearchLyricsViewController.swift:89-110` `useLyricsAction` (双击/按钮, `Main.storyboard:811/:913` 绑定) → `:106` `AppController.shared.currentLyrics = lrc`,没挂翻译。见 HARDENING_TODO.md H7 |
 
 ### 配置 (UserDefaults, GenericID DefaultsKeys)
 
