@@ -314,6 +314,12 @@
                                 <action selector="searchLyrics:" target="Ady-hI-5gd" id="RV2-uD-OF7"/>
                             </connections>
                         </menuItem>
+                        <menuItem title="AI 翻译此歌词" tag="205" id="aiT-mi-001">
+                            <modifierMask key="keyEquivalentModifierMask"/>
+                            <connections>
+                                <action selector="aiTranslateCurrentAction:" target="Ady-hI-5gd" id="aiT-mi-act"/>
+                            </connections>
+                        </menuItem>
                         <menuItem title="Lyrics" tag="202" identifier="MainMenu.Lyrics" id="hxE-X4-sJh">
                             <modifierMask key="keyEquivalentModifierMask"/>
                             <menu key="submenu" title="Lyrics" id="Wcz-DR-zeg">

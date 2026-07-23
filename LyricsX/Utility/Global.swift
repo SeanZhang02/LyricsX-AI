@@ -92,6 +92,13 @@ extension UserDefaults.DefaultsKeys {
 
     static let strictSearchEnabled = Key<Bool>("StrictSearchEnabled")
     static let preferBilingualLyrics = Key<Bool>("PreferBilingualLyrics")
+
+    // AI Translation
+    static let aiTranslationEnabled = Key<Bool>("AITranslationEnabled")
+    static let aiTranslationBaseURL = Key<String>("AITranslationBaseURL")
+    static let aiTranslationAPIKey = Key<String>("AITranslationAPIKey")
+    static let aiTranslationModel = Key<String>("AITranslationModel")
+    static let aiTranslationTargetLanguage = Key<String>("AITranslationTargetLanguage")
     static let chineseConversionIndex = Key<Int>("ChineseConversionIndex")
 
     static let combinedMenubarLyrics = Key<Bool>("CombinedMenubarLyrics")

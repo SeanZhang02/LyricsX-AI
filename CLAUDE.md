@@ -2,6 +2,25 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ⭐ This Fork: LyricsX-AI (READ FIRST)
+
+本 repo = **MxIris master (v1.8.9) + AI 歌词翻译功能** (cherry-pick 自 `gubeifengan/LyricsX` 的 `ddda309`) + 地基文档。目标用户场景: 听西语歌自动生成中文翻译, 双语显示。协作: Sean (Windows, 写代码/文档, **不能本机 build**) × Allen (Mac, build+真机测试)。中文沟通, 代码标识符英文。
+
+**冷启动按需读 (别全读, 省 token)**:
+- `docs/AI_TRANSLATION_STATUS.md` — 功能现状 + 全部代码锚点 (file:line 已验证, 30 秒懂全貌)
+- `docs/HARDENING_TODO.md` — 已知缺陷 H1-H8 (多 agent 对抗审查产出) + PR 切分建议 ← **改翻译代码前必读**
+- `docs/PROMPT_DESIGN.md` — prompt A/B 版全文 + 输出格式契约 + 解析规则
+- `docs/ROADMAP.md` — 分工/步骤/用户反馈追踪 (含 P0: "歌词对不准") + 重构红线
+
+**30 秒版**: AI 翻译核心全在 `LyricsX/Component/AppController.swift:352-608` (`AITranslationService` singleton)。歌词加载后自动整首送 OpenAI-compatible API (`编号|译文` 行协议), 译文写 `.translation(languageCode:)` attachment → 上游双语渲染层零改动直接显示 → `persist()` 落盘 LRCX `[tr:]` 标签 = 永久缓存。配置 5 个 UserDefaults key (`Global.swift:97-101`), UI 在 Preferences → General。
+
+**红线 (重构/改动不可破坏的契约)**:
+1. 译文只能以 `.translation(languageCode:)` attachment 进入 `Lyrics` — 渲染层与 LRCX 缓存的公共契约
+2. 不阻塞播放: 网络调用严禁在 main thread 或 `DispatchQueue.lyricsDisplay` 上同步等待
+3. 串曲守卫: 现实现中回填 (mutate+persist) 无条件执行 (天然安全: 只作用于本次翻译闭包捕获的 lyrics 对象及其自身文件), `currentLyrics === lyrics` 判断 (`AppController.swift:499`) 只守卫其后的 UI 刷新触发。重构时保持等价或更强的同一性守卫 (H1 copy-then-publish 方案会把守卫提到发布之前)
+4. `persist()` 前必须过覆盖率门控 — LRCX 缓存是永久的, 残缺/错位结果不能落盘
+5. 保持 5 个 `AITranslation*` UserDefaults key 名不变; 尽量少动 storyboard; 定期同步上游 (`upstream` = MxIris-LyricsX-Project/LyricsX, 活跃维护中)
+
 ## Project Overview
 
 LyricsX is a macOS menu-bar application (`LSUIElement`) that automatically searches, downloads, and displays synchronized lyrics for the currently playing song. It supports multiple music players and lyrics sources, with desktop karaoke overlay and menu-bar lyrics display. This is a personally maintained fork of `ddddxxx/LyricsX`.
