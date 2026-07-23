@@ -503,17 +503,19 @@ class AITranslationService {
 
         let modelName = shortModelName(usedModel)
         DispatchQueue.lyricsDisplay.async {
+            // H1 copy-then-publish: 不原地 mutate 共享 Lyrics(避免 data race), 构造新实例并重新发布,
+            // 让所有 $currentLyrics 订阅者(含 HUD 歌词窗口)重建并显示译文。
+            _ = lyrics.quality                          // 先固化 quality 缓存, 防译文 attachment 抬高择优分
+            var newLines = lyrics.lines                 // LyricsLine 是 struct, 值拷贝
             for (i, text) in results {
-                lyrics.lines[i].attachments[tag] = text
+                newLines[i].attachments[tag] = text
             }
-            lyrics.metadata.attachmentTags.insert(tag)
-            lyrics.metadata.needsPersist = true
-            lyrics.persist()
-            let appController = AppController.shared
-            if appController.currentLyrics === lyrics {
-                // 触发一次行刷新, 让当前行立即显示译文
-                appController.currentLineIndex = nil
-                appController.scheduleCurrentLineCheck()
+            let newLyrics = Lyrics(lines: newLines, idTags: lyrics.idTags, metadata: lyrics.metadata)
+            // 注: init 会从 newLines 重算 metadata.attachmentTags(已含译文 tag), 无需手动 insert
+            newLyrics.metadata.needsPersist = true
+            newLyrics.persist()
+            if AppController.shared.currentLyrics === lyrics {
+                AppController.shared.currentLyrics = newLyrics   // 重新发布 → 显示层重建带译文
             }
             log("AI translation finished for \(title): \(results.count)/\(indices.count) lines via \(modelName)")
             self.notify("AI 翻译完成", "《\(title)》已用 \(modelName) 翻译 \(results.count) 行, 歌词已实时更新")
