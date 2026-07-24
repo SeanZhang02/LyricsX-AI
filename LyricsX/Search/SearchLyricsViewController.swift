@@ -133,7 +133,8 @@ class SearchLyricsViewController: NSViewController, NSTableViewDelegate, NSTable
         lyrics.filtrate()
         lyrics.recognizeLanguage()
         lyrics.metadata.needsPersist = true
-        if let idx = searchResult.firstIndex(where: { lyricsHasHigherPriority(lyrics, over: $0) }) {
+        // Rank with the track's album so the matching release sorts above same-title noise.
+        if let idx = searchResult.firstIndex(where: { lyricsHasHigherPriority(lyrics, over: $0, trackAlbum: selectedPlayer.currentTrack?.album) }) {
             searchResult.insert(lyrics, at: idx)
         } else {
             searchResult.append(lyrics)

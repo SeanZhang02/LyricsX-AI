@@ -266,20 +266,46 @@ func passesMatchFloor(_ lyrics: Lyrics, request: LyricsSearchRequest, rawTitle: 
     return true
 }
 
-/// Whether the candidate's artist is close enough to the query to be shown while the search is still running.
-/// A same-title different-artist hit (e.g. a popular cover with a bundled translation) passes the match floor
-/// but would flash a wrong song before a slower provider returns the right one — hold it back instead.
-/// Fail-open like the floor: missing artist tag or keyword search can't be judged; a duration within 3s
-/// passes unconditionally (saves the correct song whose artist tag is romanized/translated).
-func artistPlausible(_ lyrics: Lyrics, request: LyricsSearchRequest, rawArtist: String, trackDuration: TimeInterval?) -> Bool {
+/// Whether a candidate is credible enough for auto-search to accept at all: BOTH the title and the
+/// artist must at least partially match (overlapping substrings), each side fail-open when untaggable.
+/// One-sided matches are different songs — a same-title cover by another artist, or another song by the
+/// same artist (how instrumentals like "Bebop" used to "match" the artist's vocal tracks).
+/// Title side has no duration exemption (an artist's other song can share the exact duration);
+/// artist side keeps it (rescues correct songs whose artist tag is romanized/translated).
+func candidatePlausible(_ lyrics: Lyrics, request: LyricsSearchRequest, rawTitle: String, rawArtist: String, trackDuration: TimeInterval?) -> Bool {
+    guard case let .info(queryTitle, queryArtist) = request.searchTerm else { return true }
+
+    if let candTitle = lyrics.idTags[.title].flatMap({ $0.isEmpty ? nil : $0 }) {
+        let references = [rawTitle, queryTitle].filter { !$0.isEmpty }
+        if !references.isEmpty {
+            guard references.contains(where: { titlePlausible(candTitle, $0) }) else {
+                return false
+            }
+        }
+    }
+
     if let len = lyrics.length, let dur = trackDuration, dur > 0, abs(len - dur) < 3 {
         return true
     }
-    guard case let .info(_, queryArtist) = request.searchTerm,
-          let candArtist = lyrics.idTags[.artist].flatMap({ $0.isEmpty ? nil : $0 }),
+    guard let candArtist = lyrics.idTags[.artist].flatMap({ $0.isEmpty ? nil : $0 }),
           !(rawArtist.isEmpty && queryArtist.isEmpty) else {
         // No artist on either side to judge by — fail open, or artist-less tracks would lose fast display.
         return true
     }
     return max(artistSimilarity(candArtist, rawArtist), artistSimilarity(candArtist, queryArtist)) >= 0.3
+}
+
+/// Title-variant tolerance: contiguous containment only, or near-identity under the strict ratio.
+/// The scattered-subsequence metric (matchSimilarity) is NOT used here — it lets a short query score
+/// 0.5+ against a long unrelated title ("En Blanco y Negro" vs "The Seasons, Op. 37b: June -
+/// Barcarole" = 0.59). Real title variants contain the core title verbatim ("Canción (De que callada
+/// manera)"); spelling/diacritic drift is caught by the strict ratio.
+private func titlePlausible(_ candidate: String, _ reference: String) -> Bool {
+    let c = foldedString(candidate), r = foldedString(reference)
+    guard !c.isEmpty, !r.isEmpty else { return true }
+    let shorter = min(c.count, r.count)
+    if shorter >= 3 || (shorter == 2 && (hasCJK(c) || hasCJK(r))), c.contains(r) || r.contains(c) {
+        return true
+    }
+    return strictSimilarity(candidate, reference) >= 0.5
 }
