@@ -201,3 +201,21 @@ func passesMatchFloor(_ lyrics: Lyrics, request: LyricsSearchRequest, rawTitle: 
     }
     return true
 }
+
+/// Whether the candidate's artist is close enough to the query to be shown while the search is still running.
+/// A same-title different-artist hit (e.g. a popular cover with a bundled translation) passes the match floor
+/// but would flash a wrong song before a slower provider returns the right one — hold it back instead.
+/// Fail-open like the floor: missing artist tag or keyword search can't be judged; a duration within 3s
+/// passes unconditionally (saves the correct song whose artist tag is romanized/translated).
+func artistPlausible(_ lyrics: Lyrics, request: LyricsSearchRequest, rawArtist: String, trackDuration: TimeInterval?) -> Bool {
+    if let len = lyrics.length, let dur = trackDuration, dur > 0, abs(len - dur) < 3 {
+        return true
+    }
+    guard case let .info(_, queryArtist) = request.searchTerm,
+          let candArtist = lyrics.idTags[.artist].flatMap({ $0.isEmpty ? nil : $0 }),
+          !(rawArtist.isEmpty && queryArtist.isEmpty) else {
+        // No artist on either side to judge by — fail open, or artist-less tracks would lose fast display.
+        return true
+    }
+    return max(matchSimilarity(candArtist, rawArtist), matchSimilarity(candArtist, queryArtist)) >= 0.3
+}

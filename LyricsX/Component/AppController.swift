@@ -27,6 +27,10 @@ class AppController: NSObject {
 
     var searchRequest: LyricsSearchRequest?
     var searchTask: Task<Void, Never>?
+    /// Best floor-passing candidate whose artist doesn't match the query. Held off-screen while the
+    /// search runs (a same-title wrong-artist hit must not flash, nor be persisted if the user skips);
+    /// published only at stream end when nothing credible arrived.
+    private var deferredCandidate: Lyrics?
 
     private var cancelBag = Set<AnyCancellable>()
 
@@ -174,6 +178,7 @@ class AppController: NSObject {
         currentLyrics = nil
         currentLineIndex = nil
         searchTask?.cancel()
+        deferredCandidate = nil
         guard let track = selectedPlayer.currentTrack else {
             return
         }
@@ -270,6 +275,7 @@ class AppController: NSObject {
                 for try await lyrics in lyricsManager.lyrics(for: request) {
                     lyricsReceived(lyrics: lyrics)
                 }
+                flushDeferredCandidate()
 
                 if defaults[.writeToiTunesAutomatically] {
                     // Don't overwrite existing Apple lyrics — preserves Apple Music's word-by-word sync (only write when the track has none).
@@ -288,6 +294,7 @@ class AppController: NSObject {
     func cancelSearch() {
         searchTask?.cancel()
         searchRequest = nil
+        deferredCandidate = nil
     }
 
     // MARK: LyricsSourceDelegate
@@ -308,12 +315,33 @@ class AppController: NSObject {
         if let current = currentLyrics, !lyricsHasHigherPriority(lyrics, over: current, trackAlbum: track.album) {
             return
         }
+        // Wrong-looking artist: keep it off-screen while better providers may still answer (it would flash
+        // a wrong song, and persist as dirty cache if the user skips mid-search). Track the best of them.
+        guard artistPlausible(lyrics, request: req, rawArtist: track.artist ?? "", trackDuration: track.duration) else {
+            if deferredCandidate.map({ lyricsHasHigherPriority(lyrics, over: $0, trackAlbum: track.album) }) ?? true {
+                deferredCandidate = lyrics
+            }
+            return
+        }
+        publish(lyrics, for: track)
+    }
 
+    private func publish(_ lyrics: Lyrics, for track: MusicTrack) {
         lyrics.associateWithTrack(track)
         lyrics.filtrate()
         lyrics.recognizeLanguage()
         lyrics.metadata.needsPersist = true
         currentLyrics = lyrics
+    }
+
+    /// Stream ended with nothing credible on screen: fall back to the best wrong-artist candidate (same
+    /// final outcome as before deferral existed, minus the misleading flash while the search was running).
+    private func flushDeferredCandidate() {
+        guard let candidate = deferredCandidate else { return }
+        deferredCandidate = nil
+        guard currentLyrics == nil, candidate.metadata.request == searchRequest,
+              let track = selectedPlayer.currentTrack else { return }
+        publish(candidate, for: track)
     }
 }
 
