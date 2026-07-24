@@ -43,12 +43,58 @@ private func editDistance(_ lhs: [Character], _ rhs: [Character], insertionCost:
 
 /// Mirrors LyricsKit 1.8.3 similarity(s1:s2:) (min-length normalized, tolerates containment), folded first.
 /// "Despacito (feat. …)" vs "Despacito" ≈ 1.0; a Japanese title vs a Spanish query ≈ 0.
+/// Clamped to 0...1 — the raw formula can go negative for suffix containment.
 func matchSimilarity(_ s1: String, _ s2: String) -> Double {
     let a = foldedChars(s1), b = foldedChars(s2)
     let len = min(a.count, b.count)
     guard len > 0 else { return 0 }
     let diff = min(editDistance(a, b, insertionCost: 0), editDistance(a, b, deletionCost: 0))
-    return Double(len - diff) / Double(len)
+    return max(0, Double(len - diff) / Double(len))
+}
+
+// MARK: - Artist similarity (token-based strict metric)
+
+private let artistSeparatorRegex = try? NSRegularExpression(
+    pattern: "\\s*[&,;、/+]\\s*|\\s+(?:feat\\.?|ft\\.?|featuring|with|and|y|e|x)\\s+",
+    options: [.caseInsensitive]
+)
+
+private func splitArtists(_ s: String) -> [String] {
+    guard let re = artistSeparatorRegex else { return [s] }
+    let marked = re.stringByReplacingMatches(in: s, range: NSRange(location: 0, length: (s as NSString).length), withTemplate: "\u{1F}")
+    let parts = marked.split(separator: "\u{1F}").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    return parts.isEmpty ? [s] : parts
+}
+
+/// 1 - Levenshtein/maxLength, folded. Containment does not inflate this, unlike matchSimilarity.
+private func strictSimilarity(_ s1: String, _ s2: String) -> Double {
+    let a = foldedChars(s1), b = foldedChars(s2)
+    guard !a.isEmpty, !b.isEmpty else { return 0 }
+    return max(0, 1 - Double(editDistance(a, b)) / Double(max(a.count, b.count)))
+}
+
+/// Artist-appropriate similarity. The title metric is wrong for artists in both directions: it rewards a
+/// loose subsequence ("Cecilia" vs "Víctor Manuel & Pablo Milanés" = 0.57 — a different artist looks
+/// plausible) and punishes suffix containment ("Pablo Milanés" vs the same query goes negative — a correct
+/// duet partner looks implausible). Here: contiguous containment (bilingual alias tags like G.E.M.邓紫棋,
+/// and feat-suffixed tags) = 1.0; otherwise the best per-artist token pair under the strict metric.
+func artistSimilarity(_ candidate: String, _ query: String) -> Double {
+    let ca = foldedString(candidate), qa = foldedString(query)
+    guard !ca.isEmpty, !qa.isEmpty else { return 0 }
+    // 2-char CJK names (王菲, 伍佰) are full names — allow containment for them too.
+    let shorter = min(ca.count, qa.count)
+    if shorter >= 3 || (shorter == 2 && (hasCJK(ca) || hasCJK(qa))), ca.contains(qa) || qa.contains(ca) {
+        return 1
+    }
+    // Seed with whole-vs-whole so an asymmetric split ("Earth Wind and Fire" vs "Earth, Wind & Fire")
+    // can't score below the unsplit comparison.
+    var best = strictSimilarity(candidate, query)
+    for c in splitArtists(candidate) {
+        for q in splitArtists(query) {
+            best = max(best, strictSimilarity(c, q))
+        }
+    }
+    return best
 }
 
 // MARK: - Query cleaning (whitelist-drop version/feat noise to improve recall)
@@ -143,7 +189,7 @@ func appMatchScore(_ lyrics: Lyrics, trackAlbum: String?) -> Double {
     switch lyrics.metadata.request?.searchTerm {
     case let .info(searchTitle, searchArtist)?:
         titleSim = lyrics.idTags[.title].flatMap { $0.isEmpty ? nil : $0 }.map { matchSimilarity($0, searchTitle) } ?? 0.6
-        artistSim = lyrics.idTags[.artist].flatMap { $0.isEmpty ? nil : $0 }.map { matchSimilarity($0, searchArtist) } ?? 0.6
+        artistSim = lyrics.idTags[.artist].flatMap { $0.isEmpty ? nil : $0 }.map { artistSimilarity($0, searchArtist) } ?? 0.6
     default:
         let q = lyrics.quality
         return q.isNaN ? 0 : q
@@ -217,5 +263,5 @@ func artistPlausible(_ lyrics: Lyrics, request: LyricsSearchRequest, rawArtist: 
         // No artist on either side to judge by — fail open, or artist-less tracks would lose fast display.
         return true
     }
-    return max(matchSimilarity(candArtist, rawArtist), matchSimilarity(candArtist, queryArtist)) >= 0.3
+    return max(artistSimilarity(candArtist, rawArtist), artistSimilarity(candArtist, queryArtist)) >= 0.3
 }
