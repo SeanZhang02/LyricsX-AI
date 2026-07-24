@@ -262,31 +262,13 @@ class AppController: NSObject {
         searchRequest = request
         searchTask = Task { @MainActor in
             do {
-                // Accept the first arrived lyrics immediately,
-                // but keep collecting for a short window to allow higher-priority providers,
-                // which might be slower, to replace it.
-                let window = defaults[.lyricsPriorityWindow] ?? 5 // seconds
-                var firstReceived = false
-                var collectionStart: Date?
-
+                // Drain the whole provider stream, always keeping the best match. lyricsReceived shows the
+                // first accepted result immediately and only replaces it with a higher-priority/higher-score
+                // one, so display stays fast while a correct-but-slower match still wins. A fixed collection
+                // window used to break early, discarding a right match that arrived late (e.g. from Musixmatch)
+                // and letting a fast same-title wrong-artist result stick.
                 for try await lyrics in lyricsManager.lyrics(for: request) {
-                    if !firstReceived {
-                        lyricsReceived(lyrics: lyrics)
-                        if let current = currentLyrics, current === lyrics {
-                            firstReceived = true
-                            collectionStart = Date()
-                        }
-                        continue
-                    }
-
-                    if let start = collectionStart,
-                       Date().timeIntervalSince(start) <= window {
-                        lyricsReceived(lyrics: lyrics)
-                        continue
-                    } else {
-                        // window expired
-                        break
-                    }
+                    lyricsReceived(lyrics: lyrics)
                 }
 
                 if defaults[.writeToiTunesAutomatically] {
@@ -300,6 +282,12 @@ class AppController: NSObject {
                 print("Failed to fetch lyrics: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Stop the in-flight auto-search so its late-arriving candidates can't overwrite an explicit manual pick.
+    func cancelSearch() {
+        searchTask?.cancel()
+        searchRequest = nil
     }
 
     // MARK: LyricsSourceDelegate
@@ -352,6 +340,7 @@ extension AppController {
         lrc.filtrate()
         lrc.recognizeLanguage()
         lrc.metadata.needsPersist = true
+        cancelSearch() // an imported file is an explicit pick — don't let a late auto candidate replace it
         currentLyrics = lrc
         AITranslationService.shared.translateIfNeeded(lrc)
         if let index = defaults[.noSearchingTrackIds].firstIndex(of: track.id) {

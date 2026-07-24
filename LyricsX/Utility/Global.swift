@@ -178,7 +178,6 @@ extension UserDefaults.DefaultsKeys {
     // Source Priority
     static let lyricsSourcePriorityEnabled = Key<Bool>("LyricsSourcePriorityEnabled")
     static let lyricsSourcePriorityOrder = Key<[String]>("LyricsSourcePriorityOrder")
-    static let lyricsPriorityWindow = Key<Double>("LyricsPriorityWindow")
 }
 
 // MARK: - Lyrics Priority

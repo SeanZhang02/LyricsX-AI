@@ -107,6 +107,7 @@ class SearchLyricsViewController: NSViewController, NSTableViewDelegate, NSTable
 
         let lrc = searchResult[index]
         lrc.associateWithTrack(track)
+        AppController.shared.cancelSearch() // user chose this result — stop the auto-search so it can't overwrite the pick
         AppController.shared.currentLyrics = lrc
         if defaults[.writeToiTunesAutomatically] {
             AppController.shared.writeToiTunes(overwrite: true)
