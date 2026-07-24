@@ -272,14 +272,15 @@ func passesMatchFloor(_ lyrics: Lyrics, request: LyricsSearchRequest, rawTitle: 
 /// same artist (how instrumentals like "Bebop" used to "match" the artist's vocal tracks).
 /// Title side has no duration exemption (an artist's other song can share the exact duration);
 /// artist side keeps it (rescues correct songs whose artist tag is romanized/translated).
-/// Thresholds: title 0.5 (legit variants measure >= 0.57, unrelated titles <= 0.40), artist 0.3.
 func candidatePlausible(_ lyrics: Lyrics, request: LyricsSearchRequest, rawTitle: String, rawArtist: String, trackDuration: TimeInterval?) -> Bool {
     guard case let .info(queryTitle, queryArtist) = request.searchTerm else { return true }
 
-    if let candTitle = lyrics.idTags[.title].flatMap({ $0.isEmpty ? nil : $0 }),
-       !(rawTitle.isEmpty && queryTitle.isEmpty) {
-        guard max(matchSimilarity(candTitle, rawTitle), matchSimilarity(candTitle, queryTitle)) >= 0.5 else {
-            return false
+    if let candTitle = lyrics.idTags[.title].flatMap({ $0.isEmpty ? nil : $0 }) {
+        let references = [rawTitle, queryTitle].filter { !$0.isEmpty }
+        if !references.isEmpty {
+            guard references.contains(where: { titlePlausible(candTitle, $0) }) else {
+                return false
+            }
         }
     }
 
@@ -292,4 +293,19 @@ func candidatePlausible(_ lyrics: Lyrics, request: LyricsSearchRequest, rawTitle
         return true
     }
     return max(artistSimilarity(candArtist, rawArtist), artistSimilarity(candArtist, queryArtist)) >= 0.3
+}
+
+/// Title-variant tolerance: contiguous containment only, or near-identity under the strict ratio.
+/// The scattered-subsequence metric (matchSimilarity) is NOT used here — it lets a short query score
+/// 0.5+ against a long unrelated title ("En Blanco y Negro" vs "The Seasons, Op. 37b: June -
+/// Barcarole" = 0.59). Real title variants contain the core title verbatim ("Canción (De que callada
+/// manera)"); spelling/diacritic drift is caught by the strict ratio.
+private func titlePlausible(_ candidate: String, _ reference: String) -> Bool {
+    let c = foldedString(candidate), r = foldedString(reference)
+    guard !c.isEmpty, !r.isEmpty else { return true }
+    let shorter = min(c.count, r.count)
+    if shorter >= 3 || (shorter == 2 && (hasCJK(c) || hasCJK(r))), c.contains(r) || r.contains(c) {
+        return true
+    }
+    return strictSimilarity(candidate, reference) >= 0.5
 }
