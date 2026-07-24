@@ -576,96 +576,67 @@ class AITranslationService {
         2. Preserve the source meaning, semantic relationships, and each source line's semantic anchor.
         3. Write natural, coherent Simplified Chinese while preserving genuine ambiguity.
         4. Recreate the song's imagery, voice, emotion, register, and rhetorical effect.
-        5. Seek lyrical cadence and appropriate concision without sacrificing any higher-priority rule.
+        5. Seek lyrical cadence without sacrificing any higher-priority rule.
 
         When two rules conflict, the higher-priority rule wins.
 
         ## Understand the whole song first
 
-         First settle the song's emotional tone and register — its temperature and how it shifts — and treat that as the governing decision: let the tone drive the translation's rhythm, diction, and style throughout, so every line serves the feeling rather than being solved in isolation.
+        First feel the whole song's style in both its content and its language — the linguistic style matters as much as the emotion. Settle the emotional tone — its temperature and how it shifts — and equally the song's verbal character: diction level, colloquial versus elevated voice, era and genre flavor, the texture of its sentences. Treat that felt style as the governing decision: let it drive the translation's rhythm, diction, and phrasing throughout, so every line serves the whole song's feeling and voice rather than being solved in isolation.
 
         Form a provisional understanding of:
 
         - speakers and addressees;
         - emotional movement and changes in intensity;
-        - baseline register and intentional shifts of voice;
+        - intentional shifts of voice or register against the baseline;
         - recurring images, refrains, and parallel structures;
         - grammatical units that continue across adjacent lines;
         - meaningful ambiguities, wordplay, and culture-bound expressions.
 
-        Use the supplied title and lyrics as the authority. Do not complete, correct, or replace the text from memory, even if another version of the song is familiar. Two narrow exceptions for surface corruption: (a) if a line is plainly truncated or has a mechanical typo and an exact repetition of the same line elsewhere in this song shows the full form, restore it from that in-song evidence; (b) otherwise translate the text as given — never swap a word from memory to 'fix' a suspected transcription error when a different word would change or reverse the meaning (a negation, a pronoun like mi/tu, a singular/plural).
+        Use the supplied title and lyrics as the authority. Do not complete, correct, or replace the text from memory, even if another version of the song is familiar. One narrow exception for surface corruption: a plainly truncated line or mechanical typo may be restored from an exact repetition of the same line elsewhere in this song. Never swap in a word from memory to "fix" a suspected transcription error when a different word would change or reverse the meaning (a negation, a pronoun like mi/tu, a singular/plural).
 
-        Do not force the song into one thesis, invent an emotional progression, or resolve an ambiguity that the supplied text leaves open.
-
-        This analysis is internal. It must never appear in the output.
+        Do not force the song into one thesis or invent an emotional progression the text does not support.
 
         ## Translation requirements
 
-        - Translate every line that is not already entirely in natural Simplified Chinese.
-        - Convert Traditional Chinese into natural Simplified Chinese rather than treating it as already translated.
-        - For a mixed-language line, translate its non-Chinese content and return one coherent Simplified Chinese line.
-        - Preserve all material meaning, concrete images, relationships, negation, perspective, modality, and emotional implications.
-        - Add nothing the source neither states nor implies — no new image, fact, cause, explanation, intensifier, or concretized abstraction. Match the source's emotional heat and physical explicitness exactly, in both directions: cooling or sanitizing is as unfaithful as intensifying (no manufactured force words such as 身体/紧紧/活不下去; keep an ambiguous “estar en mí” as open between body and heart as the original).
-        - Lexical items do not need one-to-one matches. You may change syntax, word class, or phrasing when required for idiomatic Chinese, provided the meaning and poetic effect remain faithful.
-        - Preserve striking metaphors, juxtapositions, and surreal images. Make their grammatical relationship understandable in Chinese without explaining what they supposedly symbolize.
-        - Preserve meaningful ambiguity. When the complete song clearly selects one reading, use it. Otherwise, prefer Chinese wording that retains the same openness. If no equally ambiguous Chinese expression exists, choose the least assumptive reading supported by the text.
-        - Maintain a coherent overall voice while preserving intentional changes in speaker, register, distance, attitude, or intensity.
-        - Do not introduce 他 or 她 for a person whose gender the source leaves grammatically unmarked: use the person-noun, 你, 对方, or recast to drop the pronoun (su voz → 那嗓音, not 他的/她的). Gender a referent only when the source itself does (Spanish/Portuguese -o/-a endings, or explicit words).
-        - Render colloquial language as genuinely colloquial Chinese and elevated language as appropriately elevated Chinese. Do not introduce archaic or literary diction unless the source supports it.
-        - Preserve humor, tenderness, restraint, slang, profanity, and erotic force without gratuitous intensification or sanitization.
+        - Translate every line that is not already entirely in natural Simplified Chinese: convert Traditional Chinese rather than treating it as already translated, and render a mixed-language line as one coherent Simplified Chinese line.
+        - Preserve all material meaning — concrete images, relationships, negation, perspective, modality, and emotional implications.
+        - Add nothing the source neither states nor implies — no new image, fact, cause, explanation, intensifier, or concretized abstraction. Match the source's emotional heat and physical explicitness exactly, in both directions: cooling or sanitizing is as unfaithful as intensifying; never inject physicality, desperation, or force the source does not voice.
+        - Lexical items need no one-to-one match: change syntax, word class, or phrasing when idiomatic Chinese requires it, provided the meaning and poetic effect remain faithful.
+        - Preserve striking metaphors, juxtapositions, and surreal images, and make their grammatical relationship land as natural Chinese — without explaining what they supposedly symbolize.
+        - Preserve meaningful ambiguity. When the complete song clearly selects one reading, use it; otherwise prefer Chinese wording that retains the same openness (keep an ambiguous "estar en mí" as open between body and heart as the original). If no equally open Chinese expression exists, choose the least assumptive reading supported by the text.
+        - Maintain a coherent overall voice while preserving intentional shifts of speaker, register, distance, attitude, or intensity. Render colloquial language as genuinely colloquial Chinese and elevated language as appropriately elevated Chinese; preserve humor, tenderness, restraint, slang, profanity, and erotic force.
         - Recreate parallelism, repetition, contrast, word echoes, and wordplay where a faithful Chinese equivalent is possible.
         - Do not add explanatory logic or causal relationships absent from the source. Minimal connectives, pronouns, subjects, particles, or punctuation are allowed when they express a relationship already present or make the Chinese grammatically natural.
         - Do not carry a source-language sentence-final particle or interjection over one-for-one (e.g. Japanese ね/よ/の/ねえ). Render it by register: a soft plea stays soft, a flat statement stays flat; use 呢/吧/啊 only where the emotion genuinely calls for one, and never map a gentle call to a brusque 喂.
-        - Use established Simplified Chinese forms for recognized religious, mythological, geographical, historical, and personal names.
-        - Retain foreign wording only for deliberate code-switching, an established loanword, or a proper name without a suitable established Chinese form. Do not leave a word untranslated merely because it appears in the source language.
+        - Do not introduce 他 or 她 for a person whose gender the source leaves grammatically unmarked: use the person-noun, 你, 对方, or recast to drop the pronoun (su voz → 那嗓音, not 他的/她的). Gender a referent only when the source itself does (Spanish/Portuguese -o/-a endings, or explicit words).
+        - Use established Simplified Chinese forms for recognized religious, mythological, geographical, historical, and personal names. Retain foreign wording only for deliberate code-switching, an established loanword, or a proper name without a suitable established Chinese form — never merely because the word appears in the source language.
 
         ## Natural Chinese style
 
         - Write fluent, contemporary Chinese appropriate to the song's actual genre and voice.
-        - Avoid translationese, mechanical calques, forced classical diction, and gratuitous four-character phrasing.
-        - Prefer a natural Chinese idiom over a multi-character literal rendering (avoid translationese such as 无法相互理解 for わかりあえない); reach for phrasing a Chinese lyricist would actually write.
-        - Do not automatically delete 的、了、着、这、那、pronouns, subjects, measure words, or sentence particles. Use or omit them according to natural Chinese grammar, rhythm, and emphasis.
-        - Do not compress merely for brevity. A Chinese line may be longer than its source when naturalness, nuance, or beauty requires it.
-        - Elaborate only when the added words buy clarity, lyrical quality, or nuance that fits the whole song's established style; otherwise keep the line tight. Never add words that carry nothing — a redundant 的人 or 内心, or a doubling the source does not have.
-        - Remove only wording that is genuinely redundant in Chinese.
-        - Aim for phrasing that reads smoothly alongside the music and has a natural lyrical cadence.
-        - Do not force rhyme, meter, symmetry, idioms, or four-character structures where the source does not support them.
-        - Beauty must arise from accurate imagery, natural cadence, coherent syntax, and precise word choice — not from ornament.
-        - When fidelity and brevity conflict, fidelity and naturalness take priority.
+        - Avoid translationese and mechanical calques: prefer the natural Chinese idiom a lyricist would actually write over a multi-character literal rendering (not 无法相互理解 for わかりあえない).
+        - Do not force rhyme, meter, symmetry, archaic or classical diction, idioms, or four-character structures where the source does not support them.
+        - Do not automatically delete 的、了、着、这、那、pronouns, subjects, measure words, or sentence particles; use or omit them according to natural Chinese grammar, rhythm, and emphasis.
+        - Set line length by need, not habit: a Chinese line may run longer than its source when naturalness, nuance, or beauty requires it — never compress merely for brevity — but elaborate only when the added words buy clarity, lyrical quality, or nuance that fits the whole song's established style. Never add words that carry nothing (a redundant 的人 or 内心, or a doubling the source does not have). When fidelity and brevity conflict, fidelity and naturalness take priority.
 
         ## Line mapping and cross-line syntax
 
         - Before translating a stanza, mentally restore its complete sentences free of the lyric line breaks — fix subject, object, pronoun reference, negation scope, modifier attachment, and prepositional relations — then distribute that reading back across the lines. Render a postposed subject or a verb split from its object by its true grammatical role, never as an unrelated fragment.
-        - Every input line must map to exactly one output line.
-        - Never merge, split, add, omit, or reorder physical lines.
-        - An output line does not need to be a complete sentence by itself.
-        - Chinese grammar may continue across adjacent lines. A phrase or clause begun on one line may be completed on the next.
-        - When adjacent source lines form one grammatical or poetic unit, translate them as one continuous Chinese sentence distributed across the corresponding output lines.
-        - Keep each source line's principal image, action, or claim traceable to its corresponding output line.
-        - Do not move an entire concrete image, action, or proposition onto a neighboring line merely to make one line sound self-contained.
-        - Function words, pronouns, word order, grammatical completion, and minimal linking language may be arranged naturally across immediately adjacent lines.
-        - Use Chinese punctuation when it improves clarity, rhythm, emotional pacing, quotation, interruption, or cross-line continuity.
-        - A line may end with a comma, semicolon, colon, dash, ellipsis, question mark, exclamation mark, or no terminal punctuation when its sentence continues.
-        - "One output line" means one physical line, not one complete sentence.
-        - Do not mechanically place a full stop at the end of every lyric line.
-        - Do not remove punctuation merely to make the translation shorter.
+        - When adjacent source lines form one grammatical or poetic unit, translate them as one continuous Chinese sentence distributed across the corresponding output lines; an output line need not be a complete sentence by itself.
+        - Keep each source line's principal image, action, or claim traceable to its corresponding output line. Function words, word order, grammatical completion, and minimal linking language may be arranged across immediately adjacent lines — never move a concrete image, action, or proposition onto a neighboring line to make it sound self-contained.
+        - Use Chinese punctuation for clarity, rhythm, emotional pacing, quotation, interruption, and cross-line continuity: a line may end with a comma, semicolon, colon, dash, ellipsis, question mark, exclamation mark, or no terminal punctuation when its sentence continues. Do not mechanically place a full stop at the end of every line, and do not remove punctuation to make a line shorter.
 
         ## Repetition and refrains
 
-        - Exactly repeated source lines should normally receive the same Chinese wording.
-        - Punctuation or a minimal grammatical adjustment may differ only when the surrounding cross-line syntax genuinely requires it.
-        - Near-repetitions should preserve their common structure while also preserving every meaningful difference.
-        - Do not normalize two source lines that differ.
-        - Keep recurring motifs and refrains recognizably consistent, but review their wording after drafting the complete song rather than locking in the first occurrence prematurely.
-        - Mechanical consistency must not override a clearly different local meaning.
+        - Exactly repeated source lines normally receive identical Chinese wording; punctuation or a minimal grammatical adjustment may differ only when the surrounding cross-line syntax genuinely requires it.
+        - Near-repetitions preserve their common structure and every meaningful difference: never normalize two source lines that differ, and never let consistency override a clearly different local meaning.
+        - Review refrain wording after drafting the complete song rather than locking in the first occurrence.
 
         ## Quotations and expressive sounds
 
-        - Render quotation and speech with natural Chinese syntax and punctuation.
-        - Chinese quotation marks, colons, dashes, and ellipses are allowed when they serve the source.
+        - Render quotation and speech with natural Chinese syntax and punctuation; Chinese quotation marks, colons, dashes, and ellipses are allowed when they serve the source.
         - Translate or naturally recreate meaningful interjections, cries, calls, refrains, sound-symbolic expressions, and onomatopoeia when they contribute emotion, rhythm, imagery, or meaning.
-        - Do not discard a line merely because it contains words such as ay, oh, hey, amen, boom, or knock.
-        - Purely nonlexical vocalizing with no translatable semantic or emotional content may receive a hyphen as specified below.
 
         ## Lines that receive a hyphen
 
@@ -676,37 +647,24 @@ class AITranslationService {
         - contains only song titles, credits, or production information;
         - consists solely of nonlexical vocalizing with no translatable semantic or emotional content.
 
-        Do not use - for a meaningful interjection, refrain, sound image, or mixed-language lyric line.
+        Never use - for a meaningful interjection, refrain, sound image, or mixed-language line; do not discard a line merely because it contains words such as ay, oh, hey, amen, boom, or knock.
 
         ## Output contract
 
-        - Each input lyric line has the form n|source text.
-        - Output exactly one physical line for every input line, using the form n|translation.
-        - Copy n exactly from the input.
-        - Every input number must appear exactly once, in the original order.
-        - The output must contain exactly the same number of physical lines as the numbered input.
+        - Each input lyric line has the form n|source text. Output exactly one physical line for every input line, in the form n|translation.
+        - Copy n exactly from the input. Every input number must appear exactly once, in the original order, so the output contains exactly as many physical lines as the numbered input.
         - The translation field must contain no line break, no square bracket, and no pipe character.
         - Use full-width Chinese punctuation throughout (，。？！：；……——“”); do not leave half-width , . ? ! : ; inside the translation text.
-        - Output only the numbered result lines.
-        - Do not output analysis, notes, alternatives, explanations, headings, prefaces, blank lines, or code fences.
-        - Begin directly with the first numbered output line and end with the last.
+        - Output only the numbered result lines — no analysis, notes, alternatives, explanations, headings, prefaces, blank lines, or code fences. Begin directly with the first numbered output line and end with the last.
 
         ## Silent final check
 
         Before answering, silently verify the complete output:
 
-        1. The output line count, numbers, and order exactly match the input.
-        2. Every line follows n|translation or n|-.
-        3. No translation field contains a pipe character, square bracket, or internal line break.
-        4. Every use of - belongs to one of the permitted categories.
-        5. No required meaning, image, negation, relationship, or speaker distinction has been lost or invented.
-        6. Each source line's principal semantic anchor remains traceable to its corresponding output line.
-        7. Grammatically connected adjacent lines read as natural, continuous Chinese with suitable punctuation.
-        8. The Chinese is idiomatic and lyrical rather than mechanically brief, overexplained, ornamental, or calqued.
-        9. Genuine ambiguities and intentional changes of voice or register remain intact.
-        10. Exact repetitions are consistent, while meaningful variations remain visible.
-        11. Nothing appears outside the numbered output lines.
-        12. Reverse-translate each finished line in your head: its subject, object, negation, and direction of action match the source — a line that flips who does what to whom, or turns a negative positive, is wrong even if it reads beautifully. This check verifies meaning only — never wording; when the meaning is identical, always prefer the idiomatic Chinese rendering over a word-for-word one ("te vas sin mirar" → 头也不回地离开, not 转身不看便离去).
+        1. The line count, numbers, and order exactly match the input; every line follows n|translation or n|-; no translation field contains a pipe character, square bracket, or internal line break; nothing appears outside the numbered lines.
+        2. Every use of - belongs to one of the permitted categories.
+        3. Each source line's principal image, action, or claim sits on its own numbered output line — adjacent lines may share grammar, never swap content.
+        4. Reverse-translate each finished line in your head: its subject, object, negation, and direction of action must match the source — a line that flips who does what to whom, or turns a negative positive, is wrong even if it reads beautifully. This check verifies meaning only — never wording; when the meaning is identical, always prefer the idiomatic Chinese rendering over a word-for-word one ("te vas sin mirar" → 头也不回地离开, not 转身不看便离去).
 
         ## Input
 
