@@ -260,11 +260,13 @@ class AppController: NSObject {
 
         let duration = track.duration ?? 0
         // Clean the query (drop (Live)/[feat…] version noise) to improve recall; keep the raw title/artist (used for the cache file name and the match floor).
-        let request = LyricsSearchRequest(
-            searchTerm: .info(title: cleanSearchTitle(title), artist: cleanSearchArtist(artist)),
-            duration: duration, limit: 5
-        )
-        searchRequest = request
+        let cleanedTitle = cleanSearchTitle(title)
+        let cleanedArtist = cleanSearchArtist(artist)
+        // Escalating rounds: the conservative clean first; if it accepts nothing, retry with every bracket
+        // group stripped (a bracketed translated alias yields zero provider hits and carries no noise token).
+        var queryTitles = [cleanedTitle]
+        let bare = bareSearchTitle(title)
+        if bare != cleanedTitle { queryTitles.append(bare) }
         searchTask = Task { @MainActor in
             do {
                 // Drain the whole provider stream, always keeping the best match. lyricsReceived shows the
@@ -272,10 +274,20 @@ class AppController: NSObject {
                 // one, so display stays fast while a correct-but-slower match still wins. A fixed collection
                 // window used to break early, discarding a right match that arrived late (e.g. from Musixmatch)
                 // and letting a fast same-title wrong-artist result stick.
-                for try await lyrics in lyricsManager.lyrics(for: request) {
-                    lyricsReceived(lyrics: lyrics)
+                var issued: [LyricsSearchRequest] = []
+                for queryTitle in queryTitles {
+                    let request = LyricsSearchRequest(
+                        searchTerm: .info(title: queryTitle, artist: cleanedArtist),
+                        duration: duration, limit: 5
+                    )
+                    issued.append(request)
+                    searchRequest = request
+                    for try await lyrics in lyricsManager.lyrics(for: request) {
+                        lyricsReceived(lyrics: lyrics)
+                    }
+                    if currentLyrics != nil || Task.isCancelled { break }
                 }
-                flushDeferredCandidate()
+                flushDeferredCandidate(issuedRequests: issued)
 
                 if defaults[.writeToiTunesAutomatically] {
                     // Don't overwrite existing Apple lyrics — preserves Apple Music's word-by-word sync (only write when the track has none).
@@ -334,12 +346,14 @@ class AppController: NSObject {
         currentLyrics = lyrics
     }
 
-    /// Stream ended with nothing credible on screen: fall back to the best wrong-artist candidate (same
+    /// All rounds ended with nothing credible on screen: fall back to the best wrong-artist candidate (same
     /// final outcome as before deferral existed, minus the misleading flash while the search was running).
-    private func flushDeferredCandidate() {
+    /// The candidate must come from one of this search session's own requests (cross-track race guard).
+    private func flushDeferredCandidate(issuedRequests: [LyricsSearchRequest]) {
         guard let candidate = deferredCandidate else { return }
         deferredCandidate = nil
-        guard currentLyrics == nil, candidate.metadata.request == searchRequest,
+        guard currentLyrics == nil,
+              candidate.metadata.request.map({ issuedRequests.contains($0) }) == true,
               let track = selectedPlayer.currentTrack else { return }
         publish(candidate, for: track)
     }

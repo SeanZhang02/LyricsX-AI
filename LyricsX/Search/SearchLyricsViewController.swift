@@ -68,18 +68,28 @@ class SearchLyricsViewController: NSViewController, NSTableViewDelegate, NSTable
 
         let track = selectedPlayer.currentTrack
         let duration = track?.duration ?? 0
-        // Clean the query (drop (Live)/[feat…] noise) to improve recall, same as auto-search
-        let req = LyricsSearchRequest(
-            searchTerm: .info(title: cleanSearchTitle(searchTitle), artist: cleanSearchArtist(searchArtist)),
-            duration: duration, limit: 8
-        )
-        searchRequest = req
+        // Clean the query (drop (Live)/[feat…] noise) to improve recall, same as auto-search.
+        // If the cleaned query returns nothing, retry once with every bracket group stripped
+        // (bracketed translated aliases like "(Fine Figure)" yield zero provider hits).
+        let cleanedTitle = cleanSearchTitle(searchTitle)
+        let cleanedArtist = cleanSearchArtist(searchArtist)
+        var queryTitles = [cleanedTitle]
+        let bare = bareSearchTitle(searchTitle)
+        if bare != cleanedTitle { queryTitles.append(bare) }
         progressIndicator.startAnimation(nil)
         tableView.reloadData()
         searchTask = Task {
             do {
-                for try await lyrics in lyricsManager.lyrics(for: req) {
-                    lyricsReceived(lyrics: lyrics)
+                for queryTitle in queryTitles {
+                    let req = LyricsSearchRequest(
+                        searchTerm: .info(title: queryTitle, artist: cleanedArtist),
+                        duration: duration, limit: 8
+                    )
+                    searchRequest = req
+                    for try await lyrics in lyricsManager.lyrics(for: req) {
+                        lyricsReceived(lyrics: lyrics)
+                    }
+                    if !searchResult.isEmpty { break }
                 }
                 progressIndicator.stopAnimation(nil)
             } catch is CancellationError {

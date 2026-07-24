@@ -142,6 +142,24 @@ func cleanSearchTitle(_ title: String) -> String {
     return s.isEmpty ? title : s
 }
 
+/// Aggressive fallback query: every bracket group stripped, regardless of content. Used only after the
+/// conservative clean returned zero results — a title carrying a translated alias in brackets
+/// ("Fina Estampa (Fine Figure)") gets zero hits on some providers, and the alias carries no noise token
+/// for cleanSearchTitle's whitelist to act on.
+func bareSearchTitle(_ title: String) -> String {
+    guard let re = try? NSRegularExpression(pattern: "[\\(\\[（【][^\\(\\[（【\\)\\]）】]*[\\)\\]）】]") else { return cleanSearchTitle(title) }
+    var s = cleanSearchTitle(title)
+    for _ in 0 ..< 3 {
+        let ns = s as NSString
+        let stripped = re.stringByReplacingMatches(in: s, range: NSRange(location: 0, length: ns.length), withTemplate: "")
+        if stripped == s { break }
+        s = stripped
+    }
+    s = s.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        .trimmingCharacters(in: .whitespaces)
+    return s.isEmpty ? cleanSearchTitle(title) : s
+}
+
 /// Truncate the artist only at a feat marker or a CJK enumeration comma — never at &/,/ (would split band names like Simon & Garfunkel, AC/DC).
 func cleanSearchArtist(_ artist: String) -> String {
     var s = removeNoiseBrackets(artist)
