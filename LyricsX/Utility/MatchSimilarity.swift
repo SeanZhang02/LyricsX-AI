@@ -266,9 +266,9 @@ func passesMatchFloor(_ lyrics: Lyrics, request: LyricsSearchRequest, rawTitle: 
     return true
 }
 
-/// Whether the candidate's artist is close enough to the query to be shown while the search is still running.
-/// A same-title different-artist hit (e.g. a popular cover with a bundled translation) passes the match floor
-/// but would flash a wrong song before a slower provider returns the right one — hold it back instead.
+/// Whether the candidate's artist is close enough to the query for auto-search to accept it at all.
+/// A same-title different-artist hit (a popular cover, or any random song sharing a generic title like
+/// "Bebop") passes the match floor but is a different song — auto-search drops it rather than show it.
 /// Fail-open like the floor: missing artist tag or keyword search can't be judged; a duration within 3s
 /// passes unconditionally (saves the correct song whose artist tag is romanized/translated).
 func artistPlausible(_ lyrics: Lyrics, request: LyricsSearchRequest, rawArtist: String, trackDuration: TimeInterval?) -> Bool {

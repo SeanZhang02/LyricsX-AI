@@ -27,10 +27,6 @@ class AppController: NSObject {
 
     var searchRequest: LyricsSearchRequest?
     var searchTask: Task<Void, Never>?
-    /// Best floor-passing candidate whose artist doesn't match the query. Held off-screen while the
-    /// search runs (a same-title wrong-artist hit must not flash, nor be persisted if the user skips);
-    /// published only at stream end when nothing credible arrived.
-    private var deferredCandidate: Lyrics?
 
     private var cancelBag = Set<AnyCancellable>()
 
@@ -178,7 +174,6 @@ class AppController: NSObject {
         currentLyrics = nil
         currentLineIndex = nil
         searchTask?.cancel()
-        deferredCandidate = nil
         guard let track = selectedPlayer.currentTrack else {
             return
         }
@@ -274,21 +269,17 @@ class AppController: NSObject {
                 // one, so display stays fast while a correct-but-slower match still wins. A fixed collection
                 // window used to break early, discarding a right match that arrived late (e.g. from Musixmatch)
                 // and letting a fast same-title wrong-artist result stick.
-                var issued: [LyricsSearchRequest] = []
                 for queryTitle in queryTitles {
                     let request = LyricsSearchRequest(
                         searchTerm: .info(title: queryTitle, artist: cleanedArtist),
                         duration: duration, limit: 5
                     )
-                    issued.append(request)
                     searchRequest = request
                     for try await lyrics in lyricsManager.lyrics(for: request) {
                         lyricsReceived(lyrics: lyrics)
                     }
                     if currentLyrics != nil || Task.isCancelled { break }
                 }
-                flushDeferredCandidate(issuedRequests: issued)
-
                 if defaults[.writeToiTunesAutomatically] {
                     // Don't overwrite existing Apple lyrics — preserves Apple Music's word-by-word sync (only write when the track has none).
                     writeToiTunes(overwrite: false)
@@ -306,7 +297,6 @@ class AppController: NSObject {
     func cancelSearch() {
         searchTask?.cancel()
         searchRequest = nil
-        deferredCandidate = nil
     }
 
     // MARK: LyricsSourceDelegate
@@ -327,12 +317,11 @@ class AppController: NSObject {
         if let current = currentLyrics, !lyricsHasHigherPriority(lyrics, over: current, trackAlbum: track.album) {
             return
         }
-        // Wrong-looking artist: keep it off-screen while better providers may still answer (it would flash
-        // a wrong song, and persist as dirty cache if the user skips mid-search). Track the best of them.
+        // Implausible artist (and no duration exemption): drop it. No fallback — a same-title hit by a
+        // different artist is a different song; instrumentals in particular would otherwise always
+        // "match" something, get persisted, and burn an AI-translation call on garbage. Auto-search
+        // prefers no lyrics over wrong lyrics; the Search Lyrics panel remains the manual override.
         guard artistPlausible(lyrics, request: req, rawArtist: track.artist ?? "", trackDuration: track.duration) else {
-            if deferredCandidate.map({ lyricsHasHigherPriority(lyrics, over: $0, trackAlbum: track.album) }) ?? true {
-                deferredCandidate = lyrics
-            }
             return
         }
         publish(lyrics, for: track)
@@ -344,18 +333,6 @@ class AppController: NSObject {
         lyrics.recognizeLanguage()
         lyrics.metadata.needsPersist = true
         currentLyrics = lyrics
-    }
-
-    /// All rounds ended with nothing credible on screen: fall back to the best wrong-artist candidate (same
-    /// final outcome as before deferral existed, minus the misleading flash while the search was running).
-    /// The candidate must come from one of this search session's own requests (cross-track race guard).
-    private func flushDeferredCandidate(issuedRequests: [LyricsSearchRequest]) {
-        guard let candidate = deferredCandidate else { return }
-        deferredCandidate = nil
-        guard currentLyrics == nil,
-              candidate.metadata.request.map({ issuedRequests.contains($0) }) == true,
-              let track = selectedPlayer.currentTrack else { return }
-        publish(candidate, for: track)
     }
 }
 
