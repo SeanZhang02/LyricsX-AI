@@ -11,7 +11,8 @@ class PreferenceSourceViewController: PreferenceViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        availableSources = LyricsProviders.Service.allCases.map(\.displayName)
+        // Only list actually-enabled sources; Spotify needs login auth and isn't wired up, so don't show a dead entry
+        availableSources = LyricsProviders.Service.noAuthenticationRequiredServices.map(\.displayName)
 
         enableSourcePriorityButton.state = defaults[.lyricsSourcePriorityEnabled] ? .on : .off
         sourcePriorityOrder = defaults[.lyricsSourcePriorityOrder] ?? availableSources

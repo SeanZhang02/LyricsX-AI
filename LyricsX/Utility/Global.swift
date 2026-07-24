@@ -61,6 +61,7 @@ extension NSUserInterfaceItemIdentifier {
     static let searchResultColumnTitle = NSUserInterfaceItemIdentifier("SearchResult.TableColumn.Title")
     static let searchResultColumnArtist = NSUserInterfaceItemIdentifier("SearchResult.TableColumn.Artist")
     static let searchResultColumnSource = NSUserInterfaceItemIdentifier("SearchResult.TableColumn.Source")
+    static let searchResultColumnAlbum = NSUserInterfaceItemIdentifier("SearchResult.TableColumn.Album")
 }
 
 extension NSStoryboard.SceneIdentifier {
@@ -163,6 +164,7 @@ extension UserDefaults.DefaultsKeys {
     static let globalLyricsOffset = Key<Int>("GlobalLyricsOffset")
 
     static let musixmatchToken = Key<String?>("MusixmatchToken")
+    static let musixmatchAutoToken = Key<String?>("MusixmatchAutoToken")
 
     //
     static let isInMASReview = Key<Bool?>("isInMASReview")
@@ -176,12 +178,11 @@ extension UserDefaults.DefaultsKeys {
     // Source Priority
     static let lyricsSourcePriorityEnabled = Key<Bool>("LyricsSourcePriorityEnabled")
     static let lyricsSourcePriorityOrder = Key<[String]>("LyricsSourcePriorityOrder")
-    static let lyricsPriorityWindow = Key<Double>("LyricsPriorityWindow")
 }
 
 // MARK: - Lyrics Priority
 
-func lyricsHasHigherPriority(_ new: Lyrics, over existing: Lyrics) -> Bool {
+func lyricsHasHigherPriority(_ new: Lyrics, over existing: Lyrics, trackAlbum: String? = nil) -> Bool {
     if defaults[.lyricsSourcePriorityEnabled] {
         let sourceOrder = defaults[.lyricsSourcePriorityOrder] ?? []
         let normalizedOrder = sourceOrder.map { $0.lowercased() }
@@ -197,7 +198,8 @@ func lyricsHasHigherPriority(_ new: Lyrics, over existing: Lyrics) -> Bool {
         }
     }
 
-    return new.quality > existing.quality
+    // App-side score (NaN-free, includes the album soft signal) instead of 1.8.3 quality, which has a NaN bug
+    return appMatchScore(new, trackAlbum: trackAlbum) > appMatchScore(existing, trackAlbum: trackAlbum)
 }
 
 extension CGFloat: @retroactive DefaultConstructible {}

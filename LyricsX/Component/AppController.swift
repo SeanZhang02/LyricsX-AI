@@ -27,6 +27,10 @@ class AppController: NSObject {
 
     var searchRequest: LyricsSearchRequest?
     var searchTask: Task<Void, Never>?
+    /// Best floor-passing candidate whose artist doesn't match the query. Held off-screen while the
+    /// search runs (a same-title wrong-artist hit must not flash, nor be persisted if the user skips);
+    /// published only at stream end when nothing credible arrived.
+    private var deferredCandidate: Lyrics?
 
     private var cancelBag = Set<AnyCancellable>()
 
@@ -72,20 +76,32 @@ class AppController: NSObject {
 
     @MainActor
     func updateLyricsManager() async throws {
-        let services: [LyricsProviders.Service] = LyricsProviders.Service.noAuthenticationRequiredServices
-
-        var providers: [LyricsProvider] = []
-        for service in services {
-            providers.append(service.create())
+        // Musixmatch (already in noAuthenticationRequiredServices) reads its token from AuthenticationManagerStore per request.
+        // Manual token wins; otherwise use the auto-fetched cached token. Inject the cache first (fast, avoids a first-song race), then refresh in the background.
+        let manual = defaults[.musixmatchToken]
+        let cached = (manual?.isEmpty == false) ? manual : defaults[.musixmatchAutoToken]
+        if let token = cached, !token.isEmpty {
+            await AuthenticationManagerStore.shared.setMusixmatchToken(token)
         }
 
-        // Add Musixmatch provider with saved token if available
-        if let token = defaults[.musixmatchToken], !token.isEmpty {
-            let musixmatchProvider = LyricsProviders.Musixmatch(usertoken: token)
-            providers.append(musixmatchProvider)
-        }
+        let services = LyricsProviders.Service.noAuthenticationRequiredServices
+        lyricsManager = LyricsProviders.Group(providers: services.map { $0.create() })
 
-        lyricsManager = LyricsProviders.Group(providers: providers)
+        // With no manual token, refresh the auto token in the background (the shared trial token gets rate-limited; re-fetch once per launch).
+        if manual?.isEmpty != false {
+            refreshMusixmatchAutoToken()
+        }
+    }
+
+    /// Fetch a Musixmatch usertoken from token.get in the background; on success overwrite the cache and inject the store, on failure keep the old cache.
+    private func refreshMusixmatchAutoToken() {
+        Task {
+            guard let token = await MusixmatchToken.fetch() else { return }
+            defaults[.musixmatchAutoToken] = token
+            // The user may have pasted a manual token in Lab while fetching; the manual token wins, don't overwrite.
+            guard defaults[.musixmatchToken]?.isEmpty != false else { return }
+            await AuthenticationManagerStore.shared.setMusixmatchToken(token)
+        }
     }
 
     var currentLineCheckSchedule: Cancellable?
@@ -162,6 +178,7 @@ class AppController: NSObject {
         currentLyrics = nil
         currentLineIndex = nil
         searchTask?.cancel()
+        deferredCandidate = nil
         guard let track = selectedPlayer.currentTrack else {
             return
         }
@@ -242,39 +259,38 @@ class AppController: NSObject {
         }
 
         let duration = track.duration ?? 0
-        let request = LyricsSearchRequest(searchTerm: .info(title: title, artist: artist), duration: duration, limit: 5)
-        searchRequest = request
+        // Clean the query (drop (Live)/[feat…] version noise) to improve recall; keep the raw title/artist (used for the cache file name and the match floor).
+        let cleanedTitle = cleanSearchTitle(title)
+        let cleanedArtist = cleanSearchArtist(artist)
+        // Escalating rounds: the conservative clean first; if it accepts nothing, retry with every bracket
+        // group stripped (a bracketed translated alias yields zero provider hits and carries no noise token).
+        var queryTitles = [cleanedTitle]
+        let bare = bareSearchTitle(title)
+        if bare != cleanedTitle { queryTitles.append(bare) }
         searchTask = Task { @MainActor in
             do {
-                // Accept the first arrived lyrics immediately,
-                // but keep collecting for a short window to allow higher-priority providers,
-                // which might be slower, to replace it.
-                let window = defaults[.lyricsPriorityWindow] ?? 5 // seconds
-                var firstReceived = false
-                var collectionStart: Date?
-
-                for try await lyrics in lyricsManager.lyrics(for: request) {
-                    if !firstReceived {
+                // Drain the whole provider stream, always keeping the best match. lyricsReceived shows the
+                // first accepted result immediately and only replaces it with a higher-priority/higher-score
+                // one, so display stays fast while a correct-but-slower match still wins. A fixed collection
+                // window used to break early, discarding a right match that arrived late (e.g. from Musixmatch)
+                // and letting a fast same-title wrong-artist result stick.
+                var issued: [LyricsSearchRequest] = []
+                for queryTitle in queryTitles {
+                    let request = LyricsSearchRequest(
+                        searchTerm: .info(title: queryTitle, artist: cleanedArtist),
+                        duration: duration, limit: 5
+                    )
+                    issued.append(request)
+                    searchRequest = request
+                    for try await lyrics in lyricsManager.lyrics(for: request) {
                         lyricsReceived(lyrics: lyrics)
-                        if let current = currentLyrics, current === lyrics {
-                            firstReceived = true
-                            collectionStart = Date()
-                        }
-                        continue
                     }
-
-                    if let start = collectionStart,
-                       Date().timeIntervalSince(start) <= window {
-                        lyricsReceived(lyrics: lyrics)
-                        continue
-                    } else {
-                        // window expired
-                        break
-                    }
+                    if currentLyrics != nil || Task.isCancelled { break }
                 }
+                flushDeferredCandidate(issuedRequests: issued)
 
                 if defaults[.writeToiTunesAutomatically] {
-                    // 不覆盖已有 Apple 歌词, 保住 Apple Music 的逐词同步(仅当曲目无歌词时写)
+                    // Don't overwrite existing Apple lyrics — preserves Apple Music's word-by-word sync (only write when the track has none).
                     writeToiTunes(overwrite: false)
                 }
                 AITranslationService.shared.translateIfNeeded(currentLyrics)
@@ -284,6 +300,13 @@ class AppController: NSObject {
                 print("Failed to fetch lyrics: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Stop the in-flight auto-search so its late-arriving candidates can't overwrite an explicit manual pick.
+    func cancelSearch() {
+        searchTask?.cancel()
+        searchRequest = nil
+        deferredCandidate = nil
     }
 
     // MARK: LyricsSourceDelegate
@@ -297,15 +320,42 @@ class AppController: NSObject {
         if defaults[.strictSearchEnabled], !lyrics.isMatched() {
             return
         }
-        if let current = currentLyrics, !lyricsHasHigherPriority(lyrics, over: current) {
+        // Match floor: reject candidates unrelated to the query (fixes e.g. Spanish -> Japanese), before persist / iTunes write / publish.
+        guard passesMatchFloor(lyrics, request: req, rawTitle: track.title ?? "", rawArtist: track.artist ?? "", trackDuration: track.duration) else {
             return
         }
+        if let current = currentLyrics, !lyricsHasHigherPriority(lyrics, over: current, trackAlbum: track.album) {
+            return
+        }
+        // Wrong-looking artist: keep it off-screen while better providers may still answer (it would flash
+        // a wrong song, and persist as dirty cache if the user skips mid-search). Track the best of them.
+        guard artistPlausible(lyrics, request: req, rawArtist: track.artist ?? "", trackDuration: track.duration) else {
+            if deferredCandidate.map({ lyricsHasHigherPriority(lyrics, over: $0, trackAlbum: track.album) }) ?? true {
+                deferredCandidate = lyrics
+            }
+            return
+        }
+        publish(lyrics, for: track)
+    }
 
+    private func publish(_ lyrics: Lyrics, for track: MusicTrack) {
         lyrics.associateWithTrack(track)
         lyrics.filtrate()
         lyrics.recognizeLanguage()
         lyrics.metadata.needsPersist = true
         currentLyrics = lyrics
+    }
+
+    /// All rounds ended with nothing credible on screen: fall back to the best wrong-artist candidate (same
+    /// final outcome as before deferral existed, minus the misleading flash while the search was running).
+    /// The candidate must come from one of this search session's own requests (cross-track race guard).
+    private func flushDeferredCandidate(issuedRequests: [LyricsSearchRequest]) {
+        guard let candidate = deferredCandidate else { return }
+        deferredCandidate = nil
+        guard currentLyrics == nil,
+              candidate.metadata.request.map({ issuedRequests.contains($0) }) == true,
+              let track = selectedPlayer.currentTrack else { return }
+        publish(candidate, for: track)
     }
 }
 
@@ -332,6 +382,7 @@ extension AppController {
         lrc.filtrate()
         lrc.recognizeLanguage()
         lrc.metadata.needsPersist = true
+        cancelSearch() // an imported file is an explicit pick — don't let a late auto candidate replace it
         currentLyrics = lrc
         AITranslationService.shared.translateIfNeeded(lrc)
         if let index = defaults[.noSearchingTrackIds].firstIndex(of: track.id) {
@@ -349,27 +400,27 @@ private extension Lyrics.Metadata.Key {
     static var aiTranslationAttempted = Lyrics.Metadata.Key("aiTranslationAttempted")
 }
 
-/// 歌词 AI 翻译中间件: 歌词加载后若无目标语言翻译, 调用 OpenAI 兼容接口逐行翻译,
-/// 以 [tr:lang] 附件形式写入歌词行并持久化到本地 lrcx 文件。
+/// AI lyrics translation service: once lyrics load without a target-language translation, translate line by line via an OpenAI-compatible API,
+/// writing each line as a [tr:lang] attachment and persisting to the local lrcx file.
 class AITranslationService {
 
     static let shared = AITranslationService()
 
-    /// 是否有翻译任务进行中 (菜单栏据此显示"翻译中…")
+    /// Whether a translation task is running (the menu bar shows "translating..." based on this).
     private(set) var isTranslating = false
 
     private let queue = DispatchQueue(label: "com.JH.LyricsX.aiTranslation", qos: .utility)
 
-    /// 主模型硬失败时依次尝试的备选(同一 OpenRouter key 只换 model 字段)
+    /// Fallbacks tried in order when the primary model hard-fails (same OpenRouter key, only the model field changes).
     private let fallbackModels = ["anthropic/claude-sonnet-5", "deepseek/deepseek-chat-v3.1"]
 
     private enum RequestOutcome {
-        case success(String)   // 仅 "HTTP 200 且 content 非空"
+        case success(String)   // only "HTTP 200 with non-empty content"
         case authFailure       // HTTP 401 / 403
-        case hardFailure       // 网络错误 / 超时 / 其它非 200 / 空 content / JSON 解析失败
+        case hardFailure       // network error / timeout / other non-200 / empty content / JSON parse failure
     }
 
-    /// 发送系统通知
+    /// Post a system notification.
     private func notify(_ title: String, _ body: String) {
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert]) { granted, _ in
@@ -388,7 +439,7 @@ class AITranslationService {
         return URLSession(configuration: config)
     }()
 
-    /// 菜单手动触发: 无视自动开关与"已尝试"标记, 每种跳过原因都给出通知反馈
+    /// Manual menu trigger: ignores the auto toggle / attempted flag / existing translation and force re-translates (overwrite).
     func translateNow(_ lyrics: Lyrics?) {
         guard !defaults[.aiTranslationBaseURL].isEmpty,
               !defaults[.aiTranslationAPIKey].isEmpty,
@@ -397,10 +448,6 @@ class AITranslationService {
             return
         }
         guard let lyrics = lyrics else { return }
-        guard !lyrics.metadata.hasTranslation else {
-            notify("无需翻译", "这首歌已经有翻译了")
-            return
-        }
         queue.async {
             lyrics.metadata.data[.aiTranslationAttempted] = true
             guard self.isTranslatable(lyrics) else {
@@ -418,7 +465,7 @@ class AITranslationService {
               !defaults[.aiTranslationAPIKey].isEmpty,
               !defaults[.aiTranslationModel].isEmpty,
               let lyrics = lyrics,
-              !lyrics.metadata.hasTranslation else {
+              translationCoverage(lyrics) < 0.5 else {   // re-translate partial (<50%) to complete it; skip if fully translated
             return
         }
         queue.async {
@@ -430,27 +477,26 @@ class AITranslationService {
         }
     }
 
-    // MARK: 语言判定
+    // MARK: Language detection
 
-    /// 用系统 NaturalLanguage 框架离线识别源语言(无网络、无第三方依赖):
-    /// 歌词本身已是目标语言(如中文歌 → 中译中)或太短(纯音乐)时跳过, 不调用 LLM。
+    /// Detect the source language offline with the system NaturalLanguage framework (no network, no third-party deps):
+    /// skip (no LLM call) when the lyrics are already the target language (e.g. a Chinese song) or too short (instrumental).
     private func isTranslatable(_ lyrics: Lyrics) -> Bool {
         let contents = lyrics.lines.map(\.content).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         guard contents.count >= 4 else { return false }
 
-        let target = defaults[.aiTranslationTargetLanguage].isEmpty
-            ? "zh-Hans" : defaults[.aiTranslationTargetLanguage]
+        let target = targetLanguageCode
 
         let recognizer = NLLanguageRecognizer()
         recognizer.processString(contents.joined(separator: "\n"))
-        // 识别不出(文本太短/多语混排)时偏向翻译 —— 逐行 prompt 会把已是目标语言的行输出「编号|-」兜底
+        // When undetectable (too short / mixed languages), lean toward translating — the per-line prompt outputs "n|-" for lines already in the target language.
         let hypotheses = recognizer.languageHypotheses(withMaximum: 3)
         let targetConfidence = hypotheses.first { languageMatches($0.key.rawValue, target) }?.value ?? 0
-        // 目标语言置信度足够高 → 判定歌词本身已是目标语言, 跳过翻译
+        // High enough target-language confidence -> treat the lyrics as already in the target language and skip.
         return targetConfidence < 0.65
     }
 
-    /// 按 BCP-47 主子标签比较语言代码: "zh" ~ "zh-Hans" ~ "zh-Hant", "en" ~ "en-US"
+    /// Compare language codes by BCP-47 primary subtag: "zh" ~ "zh-Hans" ~ "zh-Hant", "en" ~ "en-US".
     private func languageMatches(_ a: String, _ b: String) -> Bool {
         func primary(_ code: String) -> String {
             (code.split(separator: "-").first.map(String.init) ?? code).lowercased()
@@ -458,18 +504,28 @@ class AITranslationService {
         return primary(a) == primary(b)
     }
 
-    // MARK: 翻译流程
+    private var targetLanguageCode: String {
+        defaults[.aiTranslationTargetLanguage].isEmpty ? "zh-Hans" : defaults[.aiTranslationTargetLanguage]
+    }
+
+    /// The 0.5 threshold must be <= the persist gate ratio (results*2>=indices), or a successfully-persisted song stays below it on the next load and is re-translated every time.
+    private func translationCoverage(_ lyrics: Lyrics) -> Double {
+        let tag = LyricsLine.Attachments.Tag.translation(languageCode: targetLanguageCode)
+        let content = lyrics.lines.filter { !$0.content.trimmingCharacters(in: .whitespaces).isEmpty }
+        guard !content.isEmpty else { return 1 }
+        return Double(content.filter { $0.attachments[tag] != nil }.count) / Double(content.count)
+    }
+
+    // MARK: Translation flow
 
     private func translate(_ lyrics: Lyrics) {
-        let targetCode = defaults[.aiTranslationTargetLanguage].isEmpty ? "zh-Hans" : defaults[.aiTranslationTargetLanguage]
+        let targetCode = targetLanguageCode
         let tag = LyricsLine.Attachments.Tag.translation(languageCode: targetCode)
 
+        // Collect every non-empty content line (overwrite re-translation: new text overwrites the same tag, so partial translations get completed).
         var indices: [Int] = []
-        for (i, line) in lyrics.lines.enumerated() {
-            let content = line.content.trimmingCharacters(in: .whitespaces)
-            if !content.isEmpty, line.attachments[tag] == nil {
-                indices.append(i)
-            }
+        for (i, line) in lyrics.lines.enumerated() where !line.content.trimmingCharacters(in: .whitespaces).isEmpty {
+            indices.append(i)
         }
         guard !indices.isEmpty else { return }
 
@@ -487,7 +543,7 @@ class AITranslationService {
                 title: title,
                 targetCode: targetCode
             ) else {
-                // requestTranslation 已按失败类型发过通知(key 无效 / 接口地址无效 / 网络请求失败), 此处直接放弃
+                // requestTranslation already notified by failure type (invalid key / invalid base URL / network failure); just give up here.
                 log("AI translation request failed for \(title)")
                 return
             }
@@ -495,7 +551,7 @@ class AITranslationService {
             parseAnswer(answer, chunk: chunk, lyrics: lyrics, into: &results)
             start += chunkSize
         }
-        // 覆盖率过低视为失败, 防止错位的结果污染歌词文件
+        // Too-low coverage counts as failure, to keep misaligned results from polluting the lyrics file.
         guard results.count * 2 >= indices.count else {
             log("AI translation coverage too low for \(title): \(results.count)/\(indices.count)")
             notify("AI 翻译失败", "《\(title)》译文校验未通过, 已放弃本次结果")
@@ -504,19 +560,22 @@ class AITranslationService {
 
         let modelName = shortModelName(usedModel)
         DispatchQueue.lyricsDisplay.async {
-            // H1 copy-then-publish: 不原地 mutate 共享 Lyrics(避免 data race), 构造新实例并重新发布,
-            // 让所有 $currentLyrics 订阅者(含 HUD 歌词窗口)重建并显示译文。
-            _ = lyrics.quality                          // 先固化 quality 缓存, 防译文 attachment 抬高择优分
-            var newLines = lyrics.lines                 // LyricsLine 是 struct, 值拷贝
-            for (i, text) in results {
-                newLines[i].attachments[tag] = text
+            // H1 copy-then-publish: don't mutate the shared Lyrics in place (avoids a data race); build a new instance and republish
+            // so every $currentLyrics subscriber (incl. the HUD window) rebuilds and shows the translation.
+            _ = lyrics.quality                          // freeze the quality cache first so the translation attachment can't inflate the ranking score
+            var newLines = lyrics.lines
+            // Strip stale non-target translation tags, otherwise two translation tags on a line make the display layer pick a language at random.
+            let staleTranslations = lyrics.metadata.attachmentTags.filter { $0.isTranslation && $0 != tag }
+            for i in newLines.indices {
+                staleTranslations.forEach { newLines[i].attachments[$0] = nil }
+                if let text = results[i] { newLines[i].attachments[tag] = text }
             }
             let newLyrics = Lyrics(lines: newLines, idTags: lyrics.idTags, metadata: lyrics.metadata)
-            // 注: init 会从 newLines 重算 metadata.attachmentTags(已含译文 tag), 无需手动 insert
+            // Note: init recomputes metadata.attachmentTags from newLines (already includes the translation tag), no manual insert needed.
             newLyrics.metadata.needsPersist = true
             newLyrics.persist()
             if AppController.shared.currentLyrics === lyrics {
-                AppController.shared.currentLyrics = newLyrics   // 重新发布 → 显示层重建带译文
+                AppController.shared.currentLyrics = newLyrics   // republish -> display layer rebuilds with the translation
             }
             log("AI translation finished for \(title): \(results.count)/\(indices.count) lines via \(modelName)")
             self.notify("AI 翻译完成", "《\(title)》已用 \(modelName) 翻译 \(results.count) 行, 歌词已实时更新")
@@ -544,33 +603,124 @@ class AITranslationService {
     }
 
     private func buildPrompt(of contents: [String], title: String, targetCode: String) -> String {
-        let target = languageName(of: targetCode)
         let numbered = contents.enumerated().map { "\($0.offset + 1)|\($0.element)" }.joined(separator: "\n")
+        // Prompt is Simplified-Chinese specific; targetCode still keys the translation attachment tag elsewhere.
         return """
-        你是一位专业的歌词译者,精通多语言文学翻译。你的任务是把用户提供的歌词翻译成\(target)。
+        You are a literary translator of song lyrics, specializing in poetic, idiomatic Simplified Chinese. Work in the lineage of Chinese literary translation: prize 神似 over 形似 — likeness of spirit over likeness of surface — and aim for 化境, a rendering so natural it reads as though the song had first been conceived in Chinese. Reach 化境 only through rebuilt Chinese syntax, arranged pauses and punctuation, and the source's own imagery naturally rejoined — never through images or sentiments the source does not contain.
 
-        ## 语言规则
-        - 只翻译非\(target)歌词,统一译为\(target)。若某行本身已是\(target),按"无需翻译"处理。
+        Translate the supplied lyrics into natural Simplified Chinese for personal display in a synchronized lyrics player. Each input line has its own numbered display slot, so the physical line mapping is strict even when the Chinese sentence continues across adjacent lines.
 
-        ## 翻译原则(按优先级排序)
-        1. 意象优先于字面:保留隐喻、意象和画面感,而非逐字直译;直译会丢诗意处,用\(target)里效果对等的表达重构。
-        2. 逐行对应:与原文严格行级对齐,不合并、不拆分、不增删行。
-        3. 结构一致:重复段落(副歌、叠句)用完全相同的译文;原文的排比、头语反复(anaphora)在译文中保留。
-        4. 语域匹配:口语译口语,典雅译典雅,俚语找\(target)里同等鲜活的对应,不磨平成书面语。
-        5. 文化负载词:不可译概念(如 saudade、ojalá)就近选最贴近的\(target)表达意译;宗教/神话/地名/人名典故用通行译名,无则保留原文。
-        6. 忠于给定文本:只翻译用户提供的文本。即使你记忆中这首歌有不同版本歌词,也严格以输入为准,不补全、不纠正、不替换。
+        ## Priority
 
-        ## 输出格式(严格遵守)
-        逐行输出「编号|译文」:编号照抄输入、一一对应、不改顺序;译文单行、不含换行、不含方括号 [ ]、不含竖线 |;拟声词/ad-lib、纯制作信息行、本身已是\(target)的行输出「编号|-」;除这些行外不输出任何解释、前言、空行或代码块。
+        Apply these rules in this order:
 
-        ## 输入
-        歌名:\(title)(仅供理解语境,不作翻译依据)
-        歌词:
+        1. Obey the output contract exactly.
+        2. Preserve the source meaning, semantic relationships, and each source line's semantic anchor.
+        3. Write natural, coherent Simplified Chinese while preserving genuine ambiguity.
+        4. Recreate the song's imagery, voice, emotion, register, and rhetorical effect.
+        5. Seek lyrical cadence without sacrificing any higher-priority rule.
+
+        When two rules conflict, the higher-priority rule wins.
+
+        ## Understand the whole song first
+
+        First feel the whole song's style in both its content and its language — the linguistic style matters as much as the emotion. Settle the emotional tone — its temperature and how it shifts — and equally the song's verbal character: diction level, colloquial versus elevated voice, era and genre flavor, the texture of its sentences. Treat that felt style as the governing decision: let it drive the translation's rhythm, diction, and phrasing throughout, so every line serves the whole song's feeling and voice rather than being solved in isolation.
+
+        Form a provisional understanding of:
+
+        - speakers and addressees;
+        - emotional movement and changes in intensity;
+        - intentional shifts of voice or register against the baseline;
+        - recurring images, refrains, and parallel structures;
+        - grammatical units that continue across adjacent lines;
+        - meaningful ambiguities, wordplay, and culture-bound expressions.
+
+        Use the supplied title and lyrics as the authority. Do not complete, correct, or replace the text from memory, even if another version of the song is familiar. One narrow exception for surface corruption: a plainly truncated line or mechanical typo may be restored from an exact repetition of the same line elsewhere in this song. Never swap in a word from memory to "fix" a suspected transcription error when a different word would change or reverse the meaning (a negation, a pronoun like mi/tu, a singular/plural).
+
+        Do not force the song into one thesis or invent an emotional progression the text does not support.
+
+        ## Translation requirements
+
+        - Translate every line that is not already entirely in natural Simplified Chinese: convert Traditional Chinese rather than treating it as already translated, and render a mixed-language line as one coherent Simplified Chinese line.
+        - Preserve all material meaning — concrete images, relationships, negation, perspective, modality, and emotional implications.
+        - Add nothing the source neither states nor implies — no new image, fact, cause, explanation, intensifier, or concretized abstraction. Match the source's emotional heat and physical explicitness exactly, in both directions: cooling or sanitizing is as unfaithful as intensifying; never inject physicality, desperation, or force the source does not voice.
+        - Lexical items need no one-to-one match: change syntax, word class, or phrasing when idiomatic Chinese requires it, provided the meaning and poetic effect remain faithful.
+        - Preserve striking metaphors, juxtapositions, and surreal images, and make their grammatical relationship land as natural Chinese — without explaining what they supposedly symbolize.
+        - Preserve meaningful ambiguity. When the complete song clearly selects one reading, use it; otherwise prefer Chinese wording that retains the same openness (keep an ambiguous "estar en mí" as open between body and heart as the original). If no equally open Chinese expression exists, choose the least assumptive reading supported by the text.
+        - Maintain a coherent overall voice while preserving intentional shifts of speaker, register, distance, attitude, or intensity. Render colloquial language as genuinely colloquial Chinese and elevated language as appropriately elevated Chinese; preserve humor, tenderness, restraint, slang, profanity, and erotic force.
+        - Recreate parallelism, repetition, contrast, word echoes, and wordplay where a faithful Chinese equivalent is possible.
+        - Do not add explanatory logic or causal relationships absent from the source. Minimal connectives, pronouns, subjects, particles, or punctuation are allowed when they express a relationship already present or make the Chinese grammatically natural.
+        - Do not carry a source-language sentence-final particle or interjection over one-for-one (e.g. Japanese ね/よ/の/ねえ). Render it by register: a soft plea stays soft, a flat statement stays flat; use 呢/吧/啊 only where the emotion genuinely calls for one, and never map a gentle call to a brusque 喂.
+        - Do not introduce 他 or 她 for a person whose gender the source leaves grammatically unmarked: use the person-noun, 你, 对方, or recast to drop the pronoun (su voz → 那嗓音, not 他的/她的). Gender a referent only when the source itself does (Spanish/Portuguese -o/-a endings, or explicit words).
+        - Use established Simplified Chinese forms for recognized religious, mythological, geographical, historical, and personal names. Retain foreign wording only for deliberate code-switching, an established loanword, or a proper name without a suitable established Chinese form — never merely because the word appears in the source language.
+
+        ## Natural Chinese style
+
+        - Write fluent, contemporary Chinese appropriate to the song's actual genre and voice.
+        - Avoid translationese and mechanical calques: prefer the natural Chinese idiom a lyricist would actually write over a multi-character literal rendering (not 无法相互理解 for わかりあえない).
+        - Do not force rhyme, meter, symmetry, archaic or classical diction, idioms, or four-character structures where the source does not support them.
+        - Do not automatically delete 的、了、着、这、那、pronouns, subjects, measure words, or sentence particles; use or omit them according to natural Chinese grammar, rhythm, and emphasis.
+        - Set line length by need, not habit: a Chinese line may run longer than its source when naturalness, nuance, or beauty requires it — never compress merely for brevity — but elaborate only when the added words buy clarity, lyrical quality, or nuance that fits the whole song's established style. Never add words that carry nothing (a redundant 的人 or 内心, or a doubling the source does not have). When fidelity and brevity conflict, fidelity and naturalness take priority.
+
+        ## Line mapping and cross-line syntax
+
+        - Before translating a stanza, mentally restore its complete sentences free of the lyric line breaks — fix subject, object, pronoun reference, negation scope, modifier attachment, and prepositional relations — then distribute that reading back across the lines. Render a postposed subject or a verb split from its object by its true grammatical role, never as an unrelated fragment.
+        - When adjacent source lines form one grammatical or poetic unit, translate them as one continuous Chinese sentence distributed across the corresponding output lines; an output line need not be a complete sentence by itself.
+        - Keep each source line's principal image, action, or claim traceable to its corresponding output line. Function words, word order, grammatical completion, and minimal linking language may be arranged across immediately adjacent lines — never move a concrete image, action, or proposition onto a neighboring line to make it sound self-contained.
+        - Use Chinese punctuation for clarity, rhythm, emotional pacing, quotation, interruption, and cross-line continuity: a line may end with a comma, semicolon, colon, dash, ellipsis, question mark, exclamation mark, or no terminal punctuation when its sentence continues. Do not mechanically place a full stop at the end of every line, and do not remove punctuation to make a line shorter.
+
+        ## Repetition and refrains
+
+        - Exactly repeated source lines normally receive identical Chinese wording; punctuation or a minimal grammatical adjustment may differ only when the surrounding cross-line syntax genuinely requires it.
+        - Near-repetitions preserve their common structure and every meaningful difference: never normalize two source lines that differ, and never let consistency override a clearly different local meaning.
+        - Review refrain wording after drafting the complete song rather than locking in the first occurrence.
+
+        ## Quotations and expressive sounds
+
+        - Render quotation and speech with natural Chinese syntax and punctuation; Chinese quotation marks, colons, dashes, and ellipses are allowed when they serve the source.
+        - Translate or naturally recreate meaningful interjections, cries, calls, refrains, sound-symbolic expressions, and onomatopoeia when they contribute emotion, rhythm, imagery, or meaning.
+
+        ## Lines that receive a hyphen
+
+        Output n|- only when the source line:
+
+        - is empty or contains only whitespace;
+        - is already entirely in natural Simplified Chinese;
+        - contains only song titles, credits, or production information;
+        - consists solely of nonlexical vocalizing with no translatable semantic or emotional content.
+
+        Never use - for a meaningful interjection, refrain, sound image, or mixed-language line; do not discard a line merely because it contains words such as ay, oh, hey, amen, boom, or knock.
+
+        ## Output contract
+
+        - Each input lyric line has the form n|source text. Output exactly one physical line for every input line, in the form n|translation.
+        - Copy n exactly from the input. Every input number must appear exactly once, in the original order, so the output contains exactly as many physical lines as the numbered input.
+        - The translation field must contain no line break, no square bracket, and no pipe character.
+        - Use full-width Chinese punctuation throughout (，。？！：；……——“”); do not leave half-width , . ? ! : ; inside the translation text.
+        - Output only the numbered result lines — no analysis, notes, alternatives, explanations, headings, prefaces, blank lines, or code fences. Begin directly with the first numbered output line and end with the last.
+
+        ## Silent final check
+
+        Before answering, silently verify the complete output:
+
+        1. The line count, numbers, and order exactly match the input; every line follows n|translation or n|-; no translation field contains a pipe character, square bracket, or internal line break; nothing appears outside the numbered lines.
+        2. Every use of - belongs to one of the permitted categories.
+        3. Each source line's principal image, action, or claim sits on its own numbered output line — adjacent lines may share grammar, never swap content.
+        4. Reverse-translate each finished line in your head: its subject, object, negation, and direction of action must match the source — a line that flips who does what to whom, or turns a negative positive, is wrong even if it reads beautifully. This check verifies meaning only — never wording; when the meaning is identical, always prefer the idiomatic Chinese rendering over a word-for-word one ("te vas sin mirar" → 头也不回地离开, not 转身不看便离去).
+
+        ## Input
+
+        Song title: \(title)
+
+        The title is context only and is not an output line.
+
+        Lyrics:
+
         \(numbered)
         """
     }
 
-    /// 遍历 [主模型 + 备选] 链: 硬失败换下一个; 401/403 立即中止提示 key 错; 成功返回译文 + 实际用的模型。
+    /// Walk the [primary + fallbacks] chain: hard failure tries the next; 401/403 aborts immediately with a key error; success returns the translation and the model used.
     private func requestTranslation(of contents: [String], title: String, targetCode: String) -> (answer: String, model: String)? {
         var base = defaults[.aiTranslationBaseURL]
         while base.hasSuffix("/") { base.removeLast() }
@@ -612,7 +762,7 @@ class AITranslationService {
     }
 
     private func performRequest(_ request: URLRequest) -> RequestOutcome {
-        var outcome: RequestOutcome = .hardFailure   // 兜底: error / 无响应 / JSON 解析失败 / 超时 都落这
+        var outcome: RequestOutcome = .hardFailure   // fallback: error / no response / JSON parse failure / timeout all land here
         let semaphore = DispatchSemaphore(value: 0)
         let task = session.dataTask(with: request) { data, response, error in
             defer { semaphore.signal() }
@@ -621,7 +771,7 @@ class AITranslationService {
                 return
             }
             guard let http = response as? HTTPURLResponse else { return }
-            // 先判状态码, 早于 JSON 解析: 401/403 无条件视为 key 无效(其 body 常是非 JSON 的 HTML)
+            // Check the status code before parsing JSON: 401/403 is unconditionally an invalid key (its body is often non-JSON HTML).
             if http.statusCode == 401 || http.statusCode == 403 {
                 outcome = .authFailure
                 return
