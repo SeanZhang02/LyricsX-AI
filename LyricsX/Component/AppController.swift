@@ -317,11 +317,18 @@ class AppController: NSObject {
         if let current = currentLyrics, !lyricsHasHigherPriority(lyrics, over: current, trackAlbum: track.album) {
             return
         }
-        // Implausible artist (and no duration exemption): drop it. No fallback — a same-title hit by a
-        // different artist is a different song; instrumentals in particular would otherwise always
-        // "match" something, get persisted, and burn an AI-translation call on garbage. Auto-search
-        // prefers no lyrics over wrong lyrics; the Search Lyrics panel remains the manual override.
-        guard artistPlausible(lyrics, request: req, rawArtist: track.artist ?? "", trackDuration: track.duration) else {
+        // Implausible candidate: drop it, no fallback. Title AND artist must both partially match —
+        // a one-sided hit is a different song (a cover by someone else, or another song by the same
+        // artist, which is how instrumentals used to "match" something, get persisted, and burn an
+        // AI-translation call). Auto-search prefers no lyrics over wrong lyrics; the Search Lyrics
+        // panel remains the manual override.
+        guard candidatePlausible(lyrics, request: req, rawTitle: track.title ?? "", rawArtist: track.artist ?? "", trackDuration: track.duration) else {
+            return
+        }
+        // Content gate: providers keep lyric entries even for instrumentals (QQ serves a "纯音乐,请欣赏"
+        // placeholder) and some bodies are credits-only. Filter first, then require real content lines.
+        lyrics.filtrate()
+        guard lyrics.lines.filter({ $0.enabled && !$0.content.trimmingCharacters(in: .whitespaces).isEmpty }).count >= 4 else {
             return
         }
         publish(lyrics, for: track)
